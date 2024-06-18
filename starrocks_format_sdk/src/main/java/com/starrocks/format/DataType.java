@@ -35,16 +35,19 @@ public enum DataType {
     DECIMAL32(10, "DECIMAL32"),
     DECIMAL64(11, "DECIMAL64"),
     DECIMAL128(12, "DECIMAL128"),
-    CHAR(13, "CHAR"),
-    VARCHAR(14, "VARCHAR"),
-    BINARY(15, "BINARY"),
-    VARBINARY(16, "VARBINARY"),
-    DATE(17, "DATE"),
-    DATETIME(18, "DATETIME"),
-    ARRAY(19, "ARRAY", false),
-    JSON(20, "JSON"),
-    MAP(21, "MAP", false),
-    STRUCT(22, "STRUCT", false);
+    DATE(13, "DATE"),
+    DATETIME(14, "DATETIME"),
+    CHAR(15, "CHAR"),
+    VARCHAR(16, "VARCHAR"),
+    BINARY(17, "BINARY"),
+    VARBINARY(18, "VARBINARY"),
+    BITMAP(19, "BITMAP"),
+    OBJECT(20, "OBJECT"),
+    HLL(21, "HLL"),
+    ARRAY(22, "ARRAY"),
+    JSON(23, "JSON"),
+    MAP(24, "MAP"),
+    STRUCT(25, "STRUCT");
 
     private static final Map<String, DataType> REVERSED_MAPPING = new HashMap<>(values().length);
 

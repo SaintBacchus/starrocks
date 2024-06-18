@@ -17,8 +17,13 @@
 
 package com.starrocks.format;
 
-import com.starrocks.proto.TabletSchema.ColumnPB;
-import com.starrocks.proto.TabletSchema.TabletSchemaPB;
+import org.apache.arrow.c.ArrowArray;
+import org.apache.arrow.c.ArrowSchema;
+import org.apache.arrow.c.Data;
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.Schema;
 
 import java.util.Map;
 
@@ -30,19 +35,20 @@ enum ColumnPruneType {
 public class StarRocksReader {
     static JniWrapper jniWrapper = JniWrapper.get();
     private long tabletId;
-    private TabletSchemaPB requiredSchema;
-    private TabletSchemaPB outputSchema;
+    private Schema requiredSchema;
+    private Schema outputSchema;
     private String tabletRootPath;
     private Map<String, String> options;
     // nativeReader is the c++ StarrocksFormatReader potiner
     private long nativeReader = 0;
-
+    BufferAllocator rootAllocator;
     private boolean released = false;
 
     public StarRocksReader(long tabletId, long version,
-            TabletSchemaPB requiredSchema,
-            TabletSchemaPB outputSchema,
-            String tabletRootPath, Map<String, String> options) {
+                           Schema requiredSchema,
+                           Schema outputSchema,
+                           String tabletRootPath, Map<String, String> options) {
+
         checkSchema(requiredSchema, ColumnPruneType.REQUIRED);
         checkSchema(outputSchema, ColumnPruneType.OUTPUT);
         this.tabletId = tabletId;
@@ -50,10 +56,18 @@ public class StarRocksReader {
         this.outputSchema = outputSchema;
         this.tabletRootPath = tabletRootPath;
         this.options = options;
+        rootAllocator = new RootAllocator();
+
+        ArrowSchema requiredArrowSchema = ArrowSchema.allocateNew(rootAllocator);
+        Data.exportSchema(rootAllocator, this.requiredSchema, null, requiredArrowSchema);
+
+        ArrowSchema outputArrowSchema = ArrowSchema.allocateNew(rootAllocator);
+        Data.exportSchema(rootAllocator, this.outputSchema, null, outputArrowSchema);
+
         nativeReader = createNativeReader(tabletId,
                 version,
-                requiredSchema.toByteArray(),
-                outputSchema.toByteArray(),
+                requiredArrowSchema.memoryAddress(),
+                outputArrowSchema.memoryAddress(),
                 tabletRootPath,
                 options);
     }
@@ -68,10 +82,19 @@ public class StarRocksReader {
         nativeClose(nativeReader);
     }
 
-    public Chunk getNext() {
+    public VectorSchemaRoot getNext() {
         checkState();
-        long chunkHandler = nativeGetNext(nativeReader);
-        return new Chunk(chunkHandler, outputSchema);
+        VectorSchemaRoot vsr = VectorSchemaRoot.create(outputSchema, rootAllocator);
+        try (ArrowArray arrowArray = ArrowArray.allocateNew(rootAllocator)) {
+            try {
+                nativeGetNext(nativeReader, arrowArray.memoryAddress());
+                Data.importIntoVectorSchemaRoot(rootAllocator, arrowArray, vsr, null);
+            } catch (Exception e) {
+                arrowArray.release();
+                throw e;
+            }
+        }
+        return vsr;
     }
 
     public void release() {
@@ -80,15 +103,9 @@ public class StarRocksReader {
         released = true;
     }
 
-    private static void checkSchema(TabletSchemaPB schema, ColumnPruneType columnPruneType) {
-        if (ColumnPruneType.REQUIRED.equals(columnPruneType) && (schema == null || schema.getColumnCount() == 0)) {
+    private static void checkSchema(Schema schema, ColumnPruneType columnPruneType) {
+        if (ColumnPruneType.REQUIRED.equals(columnPruneType) && (schema == null || schema.getFields().isEmpty())) {
             throw new RuntimeException("Schema should not be empty!");
-        }
-
-        for (ColumnPB column : schema.getColumnList()) {
-            if (DataType.isUnsupported(column.getType())) {
-                throw new UnsupportedOperationException("Unsupported column type: " + column.getType());
-            }
         }
     }
 
@@ -105,15 +122,15 @@ public class StarRocksReader {
     /* native methods */
 
     public native long createNativeReader(long tabletId,
-            long version,
-            byte[] requiredSchemaPb,
-            byte[] outputSchemaPb,
-            String tableRootPath,
-            Map<String, String> options);
+                                          long version,
+                                          long requiredArrowSchemaAddr,
+                                          long outputArrowSchemaAddr,
+                                          String tableRootPath,
+                                          Map<String, String> options);
 
     public native long nativeOpen(long nativeReader);
 
     public native long nativeClose(long nativeReader);
 
-    public native long nativeGetNext(long nativeReader);
+    public native long nativeGetNext(long nativeReader, long arrowArray);
 }

@@ -17,6 +17,10 @@
 #include <unordered_map>
 #include <vector>
 
+#include "arrow/result.h"
+#include "arrow/status.h"
+#include "common/status.h"
+
 static inline std::unordered_map<std::string, std::string> filter_map_by_key_prefix(
         const std::unordered_map<std::string, std::string>& input, const std::string& prefix) {
     std::unordered_map<std::string, std::string> result;
@@ -81,3 +85,20 @@ static inline T getIntOrDefault(std::unordered_map<std::string, std::string>& op
     return default_value;
 }
 
+static inline arrow::Status to_arrow_status(const starrocks::Status& status) {
+    if (status.ok()) {
+        return arrow::Status::OK();
+    } else {
+        return arrow::Status::Invalid(status.to_string());
+    }
+}
+
+#define FORMAT_ASSIGN_OR_RETURN_IMPL(varname, lhs, rhs) \
+    auto&& varname = (rhs);                             \
+    if (UNLIKELY(!varname.ok())) {                      \
+        return to_arrow_status(varname.status());       \
+    }                                                   \
+    lhs = std::move(varname).value();
+
+#define FORMAT_ASSIGN_OR_RAISE_ARROW_STATUS(lhs, rexpr) \
+    FORMAT_ASSIGN_OR_RETURN_IMPL(ARROW_ASSIGN_OR_RAISE_NAME(_error_or_value, __COUNTER__), lhs, rexpr);

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <cctz/time_zone.h>
+#include <glog/logging.h>
 #include <jni.h>
 #include <iostream>
 #include <map>
@@ -20,15 +21,12 @@
 #include <string_view>
 #include <vector>
 
-#include <glog/logging.h>
-#include "column/datum_convert.h"
-#include "common/status.h"
-#include "format/starrocks_format_chunk.h"
+#include "arrow/result.h"
+#include "arrow/status.h"
+
 #include "format/starrocks_format_reader.h"
 #include "format/starrocks_format_writer.h"
 #include "jni_utils.h"
-#include "storage/tablet_schema.h"
-
 #include "starrocks_format/starrocks_lib.h"
 
 namespace starrocks::lake::format {
@@ -94,40 +92,31 @@ JNIEXPORT void JNICALL Java_com_starrocks_format_JniWrapper_releaseReader(JNIEnv
     }
 }
 
-JNIEXPORT void JNICALL Java_com_starrocks_format_JniWrapper_releaseChunk(JNIEnv* env, jobject jobj,
-                                                                         jlong chunkAddress) {
-    StarRocksFormatChunk* chunk = reinterpret_cast<StarRocksFormatChunk*>(chunkAddress);
-    // LOG(INFO) << "release chunk: " << chunk;
-    if (chunk != nullptr) {
-        delete chunk;
-    }
-}
-
 // writer functions
 JNIEXPORT jlong JNICALL Java_com_starrocks_format_StarRocksWriter_createNativeWriter(JNIEnv* env, jobject jobj,
-                                                                                     jlong jtablet_id,
-                                                                                     jbyteArray jschema, jlong jtxn_id,
+                                                                                     jlong jtablet_id, jlong jtxn_id,
+                                                                                     jlong jschema,
                                                                                      jstring jtable_root_path,
                                                                                      jobject joptions) {
     int64_t tablet_id = jtablet_id;
+    int64_t txn_id = jtxn_id;
     // get schema
-    uint32_t jschema_num_bytes = env->GetArrayLength(jschema);
-    int8_t* p_schema = env->GetByteArrayElements(jschema, NULL);
-    TabletSchemaPB schema_pb;
-    bool parsed = schema_pb.ParseFromArray(p_schema, jschema_num_bytes);
-    if (!parsed) {
-        LOG(INFO) << " parse schema failed!";
+    if (jschema == 0) {
+        LOG(INFO) << "output_schema should not be null";
+        env->ThrowNew(kRuntimeExceptionClass, "output_schema should not be null");
+        return 0;
     }
-    env->ReleaseByteArrayElements(jschema, p_schema, 0);
-    std::shared_ptr<TabletSchema> tablet_schema = TabletSchema::create(schema_pb);
-
-    long txn_id = jtxn_id;
     std::string table_root_path = jstring_to_cstring(env, jtable_root_path);
     std::unordered_map<std::string, std::string> options = jhashmap_to_cmap(env, joptions);
 
-    StarRocksFormatWriter* format_writer =
-            new StarRocksFormatWriter(tablet_id, tablet_schema, txn_id, std::move(table_root_path), options);
-
+    auto&& result = StarRocksFormatWriter::create(tablet_id, txn_id, reinterpret_cast<struct ArrowSchema*>(jschema),
+                                                  std::move(table_root_path), std::move(options));
+    if (!result.ok()) {
+        LOG(INFO) << "Create tablet writer failed! " << result.status();
+        env->ThrowNew(kRuntimeExceptionClass, result.status().message().c_str());
+        return 0;
+    }
+    StarRocksFormatWriter* format_writer = std::move(result).ValueUnsafe();
     return reinterpret_cast<int64_t>(format_writer);
 }
 
@@ -141,9 +130,9 @@ JNIEXPORT jlong JNICALL Java_com_starrocks_format_StarRocksWriter_destroyNativeW
 JNIEXPORT jlong JNICALL Java_com_starrocks_format_StarRocksWriter_nativeOpen(JNIEnv* env, jobject jobj, jlong handler) {
     StarRocksFormatWriter* tablet_writer = reinterpret_cast<StarRocksFormatWriter*>(handler);
     SAFE_CALL_WRITER_FUNCATION(tablet_writer, {
-        Status st = tablet_writer->open();
+        arrow::Status st = tablet_writer->open();
         if (!st.ok()) {
-            env->ThrowNew(kRuntimeExceptionClass, st.message().get_data());
+            env->ThrowNew(kRuntimeExceptionClass, st.message().c_str());
         }
     });
     return 0;
@@ -157,18 +146,15 @@ JNIEXPORT jlong JNICALL Java_com_starrocks_format_StarRocksWriter_nativeClose(JN
 }
 
 JNIEXPORT jlong JNICALL Java_com_starrocks_format_StarRocksWriter_nativeWrite(JNIEnv* env, jobject jobj, jlong handler,
-                                                                              jlong jchunk_data) {
+                                                                              jlong jArrowArray) {
     StarRocksFormatWriter* tablet_writer = reinterpret_cast<StarRocksFormatWriter*>(handler);
     SAFE_CALL_WRITER_FUNCATION(tablet_writer, {
-        StarRocksFormatChunk* chunk = reinterpret_cast<StarRocksFormatChunk*>(jchunk_data);
-        if (chunk == nullptr) {
-            LOG(INFO) << "chunk is null";
-        }
-        if (tablet_writer != nullptr && chunk != nullptr) {
-            Status st = tablet_writer->write(chunk);
-            // LOG(INFO) << "write result " << st;
+        const struct ArrowArray* c_array_import = reinterpret_cast<struct ArrowArray*>(jArrowArray);
+        if (c_array_import != nullptr) {
+            arrow::Status st = tablet_writer->write(c_array_import);
             if (!st.ok()) {
-                env->ThrowNew(kRuntimeExceptionClass, st.message().get_data());
+                 LOG(INFO) << "write result " << st;
+                env->ThrowNew(kRuntimeExceptionClass, st.message().c_str());
             }
         }
     });
@@ -180,10 +166,10 @@ JNIEXPORT jlong JNICALL Java_com_starrocks_format_StarRocksWriter_nativeFlush(JN
                                                                               jlong handler) {
     StarRocksFormatWriter* tablet_writer = reinterpret_cast<StarRocksFormatWriter*>(handler);
     SAFE_CALL_WRITER_FUNCATION(tablet_writer, {
-        Status st = tablet_writer->flush();
+        arrow::Status st = tablet_writer->flush();
         LOG(INFO) << "flush result " << st;
         if (!st.ok()) {
-            env->ThrowNew(kRuntimeExceptionClass, st.message().get_data());
+            env->ThrowNew(kRuntimeExceptionClass, st.message().c_str());
         }
     });
     return 0;
@@ -193,41 +179,45 @@ JNIEXPORT jlong JNICALL Java_com_starrocks_format_StarRocksWriter_nativeFinish(J
                                                                                jlong handler) {
     StarRocksFormatWriter* tablet_writer = reinterpret_cast<StarRocksFormatWriter*>(handler);
     SAFE_CALL_WRITER_FUNCATION(tablet_writer, {
-        Status st = tablet_writer->finish();
+        arrow::Status st = tablet_writer->finish();
         LOG(INFO) << "finish result " << st;
         if (!st.ok()) {
-            env->ThrowNew(kRuntimeExceptionClass, st.message().get_data());
+            env->ThrowNew(kRuntimeExceptionClass, st.message().c_str());
         }
-    });
-    return 0;
-}
-
-JNIEXPORT jlong JNICALL Java_com_starrocks_format_StarRocksWriter_createNativeChunk(JNIEnv* env, jobject jobj,
-                                                                                    jlong handler, jint capacity) {
-    StarRocksFormatWriter* tablet_writer = reinterpret_cast<StarRocksFormatWriter*>(handler);
-    SAFE_CALL_WRITER_FUNCATION(tablet_writer, {
-        StarRocksFormatChunk* chunk = tablet_writer->new_chunk(capacity);
-        return reinterpret_cast<int64_t>(chunk);
     });
     return 0;
 }
 
 // reader function
 JNIEXPORT jlong JNICALL Java_com_starrocks_format_StarRocksReader_createNativeReader(
-        JNIEnv* env, jobject jobj, jlong jtablet_id, jlong jversion, jbyteArray jrequired_schema,
-        jbyteArray joutput_schema, jstring jtable_root_path, jobject joptions) {
+        JNIEnv* env, jobject jobj, jlong jtablet_id, jlong jversion, jlong jrequired_schema, jlong joutput_schema,
+        jstring jtable_root_path, jobject joptions) {
     int64_t tablet_id = jtablet_id;
     int64_t version = jversion;
     // get schema
-    std::shared_ptr<TabletSchema> required_schema = jbyteArray_to_TableSchema(env, jrequired_schema);
-    std::shared_ptr<TabletSchema> output_schema = jbyteArray_to_TableSchema(env, joutput_schema);
-
+    if (jrequired_schema == 0) {
+        LOG(INFO) << "required_schema should not be null";
+        env->ThrowNew(kRuntimeExceptionClass, "required_schema should not be null");
+        return 0;
+    }
+    if (joutput_schema == 0) {
+        LOG(INFO) << "output_schema should not be null";
+        env->ThrowNew(kRuntimeExceptionClass, "output_schema should not be null");
+        return 0;
+    }
     std::string table_root_path = jstring_to_cstring(env, jtable_root_path);
     std::unordered_map<std::string, std::string> options = jhashmap_to_cmap(env, joptions);
 
-    StarRocksFormatReader* format_Reader = new StarRocksFormatReader(tablet_id, version, required_schema, output_schema,
-                                                                     std::move(table_root_path), options);
+    auto&& result = StarRocksFormatReader::create(
+            tablet_id, version, reinterpret_cast<struct ArrowSchema*>(jrequired_schema),
+            reinterpret_cast<struct ArrowSchema*>(joutput_schema), std::move(table_root_path), std::move(options));
 
+    if (!result.ok()) {
+        LOG(INFO) << "Create tablet reader failed! " << result.status();
+        env->ThrowNew(kRuntimeExceptionClass, result.status().message().c_str());
+        return 0;
+    }
+    StarRocksFormatReader* format_Reader = std::move(result).ValueUnsafe();
     return reinterpret_cast<int64_t>(format_Reader);
 }
 
@@ -242,10 +232,11 @@ JNIEXPORT jlong JNICALL Java_com_starrocks_format_StarRocksReader_destroyNativeR
 JNIEXPORT jlong JNICALL Java_com_starrocks_format_StarRocksReader_nativeOpen(JNIEnv* env, jobject jobj, jlong handler) {
     StarRocksFormatReader* tablet_reader = reinterpret_cast<StarRocksFormatReader*>(handler);
     SAFE_CALL_READER_FUNCATION(tablet_reader, {
-        Status st = tablet_reader->open();
+        arrow::Status st = tablet_reader->open();
         LOG(INFO) << "tablet reader open result " << st;
         if (!st.ok()) {
-            env->ThrowNew(kRuntimeExceptionClass, st.message().get_data());
+            LOG(INFO) << "tablet reader open failed:" << st;
+            env->ThrowNew(kRuntimeExceptionClass, st.message().c_str());
         }
     });
     return 0;
@@ -259,11 +250,16 @@ JNIEXPORT jlong JNICALL Java_com_starrocks_format_StarRocksReader_nativeClose(JN
 }
 
 JNIEXPORT jlong JNICALL Java_com_starrocks_format_StarRocksReader_nativeGetNext(JNIEnv* env, jobject jobj,
-                                                                                jlong handler) {
+                                                                                jlong handler, jlong jArrowArray) {
     StarRocksFormatReader* tablet_reader = reinterpret_cast<StarRocksFormatReader*>(handler);
     SAFE_CALL_READER_FUNCATION(tablet_reader, {
-        StarRocksFormatChunk* format_chunk = tablet_reader->get_next();
-        return reinterpret_cast<int64_t>(format_chunk);
+        struct ArrowArray* c_array_export = reinterpret_cast<struct ArrowArray*>(jArrowArray);
+        arrow::Status st = tablet_reader->get_next(c_array_export);
+        if (!st.ok()) {
+            LOG(INFO) << "tablet reader get next failed! " << st;
+            env->ThrowNew(kRuntimeExceptionClass, st.message().c_str());
+        }
+        return 0;
     });
     return 0;
 }

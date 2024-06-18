@@ -654,6 +654,15 @@ std::string TabletColumn::debug_string() const {
        << ",frac=" << (has_scale() ? std::to_string(_scale) : "N/A") << ",length=" << _length
        << ",index_length=" << _index_length << ",is_bf_column=" << is_bf_column()
        << ",has_bitmap_index=" << has_bitmap_index() << ")";
+    auto sub_size = _extra_fields ? _extra_fields->sub_columns.size() : 0;
+    ss << "subcol " << sub_size << "(";
+    if (sub_size > 0) {
+        ss << "subcol( ";
+        for (auto subcol : _extra_fields->sub_columns) {
+            ss << subcol.debug_string();
+        }
+    }
+    ss << " )";
     return ss.str();
 }
 

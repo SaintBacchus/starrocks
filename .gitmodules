@@ -1,0 +1,3 @@
+[submodule "starrocks_format_sdk/src/main/cpp/arrow"]
+	path = starrocks_format_sdk/src/main/cpp/arrow
+	url = git@code.byted.org:emr-core/arrow.git

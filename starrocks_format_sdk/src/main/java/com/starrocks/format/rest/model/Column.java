@@ -19,6 +19,7 @@ package com.starrocks.format.rest.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.starrocks.format.DataType;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class Column {
@@ -26,20 +27,8 @@ public class Column {
     @JsonProperty("name")
     private String name;
 
-    @JsonProperty("primitiveType")
-    private String primitiveType;
-
-    @JsonProperty("primitiveTypeSize")
-    private Integer primitiveTypeSize;
-
-    @JsonProperty("columnSize")
-    private Integer columnSize;
-
-    @JsonProperty("precision")
-    private Integer precision;
-
-    @JsonProperty("scale")
-    private Integer scale;
+    @JsonProperty("type")
+    private Type type;
 
     @JsonProperty("aggregationType")
     private String aggregationType;
@@ -71,6 +60,100 @@ public class Column {
     public Column() {
     }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Type {
+
+        @JsonProperty("name")
+        private String name;
+
+        @JsonProperty("typeSize")
+        private Integer typeSize;
+
+        @JsonProperty("columnSize")
+        private Integer columnSize;
+
+        @JsonProperty("precision")
+        private Integer precision;
+
+        @JsonProperty("scale")
+        private Integer scale;
+
+        @JsonProperty("itemType")
+        private Type itemType;
+
+        @JsonProperty("named")
+        private Boolean named;
+
+        @JsonProperty("fields")
+        private List<Column> fields;
+
+        @JsonProperty("keyType")
+        private Type keyType;
+
+        @JsonProperty("valueType")
+        private Type valueType;
+
+        public Type() {
+
+        }
+
+        public boolean isScalar() {
+            return "SCALAR".equals(getName());
+        }
+
+        public boolean isArray() {
+            return DataType.ARRAY.getLiteral().equalsIgnoreCase(getName());
+        }
+
+        public boolean isStruct() {
+            return DataType.STRUCT.getLiteral().equalsIgnoreCase(getName());
+        }
+
+        public boolean isMap() {
+            return DataType.MAP.getLiteral().equalsIgnoreCase(getName());
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public Integer getTypeSize() {
+            return typeSize;
+        }
+
+        public Integer getColumnSize() {
+            return columnSize;
+        }
+
+        public Integer getPrecision() {
+            return precision;
+        }
+
+        public Integer getScale() {
+            return scale;
+        }
+
+        public Type getItemType() {
+            return itemType;
+        }
+
+        public Boolean getNamed() {
+            return named;
+        }
+
+        public List<Column> getFields() {
+            return fields;
+        }
+
+        public Type getKeyType() {
+            return keyType;
+        }
+
+        public Type getValueType() {
+            return valueType;
+        }
+    }
+
     public String getName() {
         return name;
     }
@@ -79,52 +162,12 @@ public class Column {
         this.name = name;
     }
 
-    public String getPrimitiveType() {
-        return primitiveType;
-    }
-
-    public void setPrimitiveType(String primitiveType) {
-        this.primitiveType = primitiveType;
-    }
-
-    public Integer getPrimitiveTypeSize() {
-        return primitiveTypeSize;
-    }
-
-    public void setPrimitiveTypeSize(Integer primitiveTypeSize) {
-        this.primitiveTypeSize = primitiveTypeSize;
+    public Type getType() {
+        return type;
     }
 
     public String getAggregationType() {
         return aggregationType;
-    }
-
-    public void setAggregationType(String aggregationType) {
-        this.aggregationType = aggregationType;
-    }
-
-    public Integer getColumnSize() {
-        return columnSize;
-    }
-
-    public void setColumnSize(Integer columnSize) {
-        this.columnSize = columnSize;
-    }
-
-    public Integer getPrecision() {
-        return precision;
-    }
-
-    public void setPrecision(Integer precision) {
-        this.precision = precision;
-    }
-
-    public Integer getScale() {
-        return scale;
-    }
-
-    public void setScale(Integer scale) {
-        this.scale = scale;
     }
 
     public Boolean getKey() {

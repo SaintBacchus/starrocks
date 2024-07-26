@@ -71,8 +71,9 @@ COPY --from=builder /root/.m2 /root/.m2
 # Copy starlet dependencies
 COPY --from=starlet /release $STARLET_INSTALL_DIR
 
-# emr lakehouse install
+# emr lakehouse install, ninja-build is for build arrow
 RUN yum install -y mysql \
+    && yum install -y ninja-build \
     && yum install -y java-11-openjdk-devel \
     && wget https://dl.min.io/server/minio/release/linux-amd64/archive/minio-20231120224007.0.0.x86_64.rpm -O /tmp/minio.rpm && rpm -ivh /tmp/minio.rpm && rm /tmp/minio.rpm \
     && wget https://dl.min.io/client/mc/release/linux-amd64/mc -O /usr/local/bin/mc && chmod +x /usr/local/bin/mc

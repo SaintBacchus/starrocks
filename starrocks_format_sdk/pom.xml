@@ -330,5 +330,32 @@
                 </plugins>
             </build>
         </profile>
+        <profile>
+            <id>format-lib-dev</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.xolstice.maven.plugins</groupId>
+                        <artifactId>protobuf-maven-plugin</artifactId>
+                        <version>0.5.1</version>
+                        <configuration>
+                            <protocExecutable>protoc</protocExecutable>
+                            <protoSourceRoot>../gensrc/proto</protoSourceRoot>
+                            <outputDirectory>target/generated-sources/proto/</outputDirectory>
+                            <clearOutputDirectory>false</clearOutputDirectory>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <phase>process-sources</phase>
+                                <goals>
+                                    <goal>compile</goal>
+                                    <goal>test-compile</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
     </profiles>
 </project>

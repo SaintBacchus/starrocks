@@ -74,9 +74,11 @@ TabletReader::~TabletReader() {
 }
 
 Status TabletReader::prepare() {
-    _tablet_schema = GlobalTabletSchemaMap::Instance()->emplace(_tablet_metadata->schema()).first;
-    if (UNLIKELY(_tablet_schema == nullptr)) {
-        return Status::InternalError("failed to construct tablet schema");
+    if (!_tablet_schema) {
+        _tablet_schema = GlobalTabletSchemaMap::Instance()->emplace(_tablet_metadata->schema()).first;
+        if (UNLIKELY(_tablet_schema == nullptr)) {
+            return Status::InternalError("failed to construct tablet schema");
+        }
     }
     if (!_rowsets_inited) {
         _rowsets = Rowset::get_rowsets(_tablet_mgr, _tablet_metadata);
@@ -88,7 +90,8 @@ Status TabletReader::prepare() {
 
 Status TabletReader::open(const TabletReaderParams& read_params) {
     if (read_params.reader_type != ReaderType::READER_QUERY && read_params.reader_type != ReaderType::READER_CHECKSUM &&
-        read_params.reader_type != ReaderType::READER_ALTER_TABLE && !is_compaction(read_params.reader_type)) {
+        read_params.reader_type != ReaderType::READER_ALTER_TABLE && !is_compaction(read_params.reader_type) &&
+        read_params.reader_type != ReaderType::READER_BYPASS_QUERY ) {
         return Status::NotSupported("reader type not supported now");
     }
     Status st = init_collector(read_params);
@@ -148,6 +151,7 @@ Status TabletReader::get_segment_iterators(const TabletReaderParams& params, std
         rs_opts.is_primary_keys = true;
         rs_opts.version = _tablet_metadata->version();
     }
+    rs_opts.reader_type = params.reader_type;
 
     SCOPED_RAW_TIMER(&_stats.create_segment_iter_ns);
     for (auto& rowset : _rowsets) {

@@ -152,7 +152,7 @@ public class SegmentLoadJob extends BulkLoadJob {
             if (tabletMetaToDataFileInfo.containsKey(tabletMetaStr)
                     && tabletMetaToSchemaFilePath.containsKey(tabletMetaStr)) {
                 List<Pair<String, Long>> fileInfoList = tabletMetaToDataFileInfo.get(tabletMetaStr);
-                for (Pair<String, Long> fileInfo: fileInfoList) {
+                for (Pair<String, Long> fileInfo : fileInfoList) {
                     TBrokerRangeDesc tBrokerRangeDesc = new TBrokerRangeDesc();
                     tBrokerRangeDesc.setFile_type(TFileType.FILE_BROKER);
                     tBrokerRangeDesc.setFormat_type(TFileFormatType.FORMAT_STARROCKS);

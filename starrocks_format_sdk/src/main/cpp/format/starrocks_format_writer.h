@@ -54,6 +54,9 @@ public:
     // write txn log
     Status finish_txn_log();
 
+    // write segment pb
+    Status finish_schema_pb();
+
 private:
     Status put_txn_log(const TxnLogPtr& log);
     StatusOr<TabletMetadataPtr> get_tablet_metadata(std::shared_ptr<FileSystem> fs);
@@ -70,6 +73,10 @@ private:
     uint32_t _max_rows_per_segment;
     std::shared_ptr<FixedLocationProvider> _provider;
     std::unique_ptr<TabletWriter> _tablet_writer;
+
+    bool _share_data = true;
+    std::vector<std::shared_ptr<SegmentPB>> _segment_pbs;
+    size_t _total_row_size = 0;
 };
 
 } // namespace starrocks::lake

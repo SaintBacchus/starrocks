@@ -492,23 +492,28 @@ public class RestClient implements AutoCloseable {
                         return responseEntityParser.apply(httpEntity);
                     }
 
-                    String message = null;
+                    String message = response.getStatusLine().toString();
                     if (null != httpEntity) {
-                        message = EntityUtils.toString(httpEntity, StandardCharsets.UTF_8);
+                        message = message + ", " + EntityUtils.toString(httpEntity, StandardCharsets.UTF_8);
                     }
-                    LOG.warn("Request {} with retries {} error, reason: {}", request, retryCnt, message);
+                    e = new RequestException(request, message);
+                    LOG.debug("Request {} with retries {} error, reason: {}", request, retryCnt, message);
                 }
             } catch (Throwable ex) {
                 e = ex;
-                LOG.warn("Request {} with retries {} error, reason: {}", request, retryCnt, e.getMessage());
             }
         }
 
+        LOG.error("Request {} error", request, e);
         if (e instanceof RequestException) {
             throw (RequestException) e;
         }
 
-        throw new RequestException(request, Optional.ofNullable(e).map(Throwable::getMessage).orElse(null), e);
+        throw new RequestException(
+                request,
+                Optional.ofNullable(e).map(Throwable::getMessage).orElse(null),
+                e
+        );
     }
 
     /**

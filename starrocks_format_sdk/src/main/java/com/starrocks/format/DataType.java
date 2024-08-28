@@ -93,6 +93,14 @@ public enum DataType {
         return !isSupported(dataType);
     }
 
+    public boolean is(String type) {
+        return name().equalsIgnoreCase(type) || getLiteral().equalsIgnoreCase(type);
+    }
+
+    public boolean not(String type) {
+        return !is(type);
+    }
+
     public int getId() {
         return id;
     }

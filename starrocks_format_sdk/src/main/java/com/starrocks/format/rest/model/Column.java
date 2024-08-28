@@ -100,7 +100,7 @@ public class Column {
         }
 
         public boolean isScalar() {
-            return "SCALAR".equals(getName());
+            return !isArray() && !isStruct() && !isMap();
         }
 
         public boolean isArray() {
@@ -115,44 +115,85 @@ public class Column {
             return DataType.MAP.getLiteral().equalsIgnoreCase(getName());
         }
 
+
         public String getName() {
             return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
         }
 
         public Integer getTypeSize() {
             return typeSize;
         }
 
+        public void setTypeSize(Integer typeSize) {
+            this.typeSize = typeSize;
+        }
+
         public Integer getColumnSize() {
             return columnSize;
+        }
+
+        public void setColumnSize(Integer columnSize) {
+            this.columnSize = columnSize;
         }
 
         public Integer getPrecision() {
             return precision;
         }
 
+        public void setPrecision(Integer precision) {
+            this.precision = precision;
+        }
+
         public Integer getScale() {
             return scale;
+        }
+
+        public void setScale(Integer scale) {
+            this.scale = scale;
         }
 
         public Type getItemType() {
             return itemType;
         }
 
+        public void setItemType(Type itemType) {
+            this.itemType = itemType;
+        }
+
         public Boolean getNamed() {
             return named;
+        }
+
+        public void setNamed(Boolean named) {
+            this.named = named;
         }
 
         public List<Column> getFields() {
             return fields;
         }
 
+        public void setFields(List<Column> fields) {
+            this.fields = fields;
+        }
+
         public Type getKeyType() {
             return keyType;
         }
 
+        public void setKeyType(Type keyType) {
+            this.keyType = keyType;
+        }
+
         public Type getValueType() {
             return valueType;
+        }
+
+        public void setValueType(Type valueType) {
+            this.valueType = valueType;
         }
     }
 
@@ -168,8 +209,16 @@ public class Column {
         return type;
     }
 
+    public void setType(Type type) {
+        this.type = type;
+    }
+
     public String getAggregationType() {
         return aggregationType;
+    }
+
+    public void setAggregationType(String aggregationType) {
+        this.aggregationType = aggregationType;
     }
 
     public Boolean getKey() {
@@ -235,5 +284,4 @@ public class Column {
     public void setUniqueId(Integer uniqueId) {
         this.uniqueId = uniqueId;
     }
-
 }

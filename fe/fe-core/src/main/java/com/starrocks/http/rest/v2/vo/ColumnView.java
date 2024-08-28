@@ -94,7 +94,7 @@ public class ColumnView {
         return cvo;
     }
 
-    private abstract static class TypeView {
+    public abstract static class TypeView {
 
         @SerializedName("name")
         protected String name;
@@ -121,7 +121,7 @@ public class ColumnView {
 
     }
 
-    private static class ScalarTypeView extends TypeView {
+    public static class ScalarTypeView extends TypeView {
 
         @SerializedName("typeSize")
         private Integer typeSize;
@@ -173,7 +173,7 @@ public class ColumnView {
         }
     }
 
-    private static class ArrayTypeView extends TypeView {
+    public static class ArrayTypeView extends TypeView {
 
         @SerializedName("itemType")
         private TypeView itemType;
@@ -195,7 +195,7 @@ public class ColumnView {
         }
     }
 
-    private static class StructTypeView extends TypeView {
+    public static class StructTypeView extends TypeView {
 
         @SerializedName("named")
         private Boolean named;
@@ -264,7 +264,7 @@ public class ColumnView {
         }
     }
 
-    private static class MapTypeView extends TypeView {
+    public static class MapTypeView extends TypeView {
 
         @SerializedName("keyType")
         private TypeView keyType;

@@ -39,7 +39,7 @@ public class StarRocksUtils {
 
     public static final String STARROKCS_TABLE_ID = "starrokcs.table.id";
     public static final String STARROKCS_TABLE_KEY_TYPE = "starrokcs.table.keyType";
-    public static final String STARROKCS_TABLE_COMPRESSION =  "starrokcs.compression";
+    public static final String STARROKCS_TABLE_COMPRESSION = "starrokcs.compression";
     public static final String STARROKCS_TABLE_KEY_INDEX = "starrokcs.table.keyIndex";
     public static final String STARROKCS_TABLE_SHORT_KEY_NUM = "starrokcs.table.shortKeyNum";
     public static final String STARROKCS_TABLE_NUMROWS_PER_BLOCK = "starrokcs.table.numRowsPerBlock";
@@ -89,30 +89,30 @@ public class StarRocksUtils {
     }
 
     public static List<Field> getChildren(Column.Type columnType) {
+        if (columnType.isScalar()) {
+            return new ArrayList<>(0);
+        }
+
         List<Field> children = new ArrayList<>();
-        if (!columnType.isScalar()) {
-            if ("MAP".equals(columnType.getName())) {
-                Field keyField = toArrowField("key", columnType.getKeyType());
-                Field valueField = toArrowField("value", columnType.getValueType());
-                Map<String, String> metadata = new HashMap<>();
-                metadata.put(STARROKCS_COLUMN_TYPE, "STRUCT");
-                Field childField = new Field("entries",
-                        new FieldType(false, ArrowType.Struct.INSTANCE, null, metadata), Arrays.asList(keyField, valueField));
+        if (DataType.MAP.is(columnType.getName())) {
+            Field keyField = toArrowField("key", columnType.getKeyType());
+            Field valueField = toArrowField("value", columnType.getValueType());
+            Map<String, String> metadata = new HashMap<>();
+            metadata.put(STARROKCS_COLUMN_TYPE, "STRUCT");
+            Field childField = new Field("entries",
+                    new FieldType(false, ArrowType.Struct.INSTANCE, null, metadata), Arrays.asList(keyField, valueField));
+            children.add(childField);
+        } else if (DataType.ARRAY.is(columnType.getName())) {
+            Field itemField = toArrowField("item1", columnType.getItemType());
+            children.add(itemField);
+        } else if (DataType.STRUCT.is(columnType.getName())) {
+            for (Column child : columnType.getFields()) {
+                Field childField = toArrowField(child);
                 children.add(childField);
-            } else if ("ARRAY".equals(columnType.getName())) {
-                Field itemField = toArrowField("item1", columnType.getItemType());
-                children.add(itemField);
-            } else if ("STRUCT".equals(columnType.getName())) {
-                for (Column child : columnType.getFields()) {
-                    Field childField = toArrowField(child);
-                    children.add(childField);
-                }
             }
         }
         return children;
     }
-
-
 
     public static ArrowType toArrowType(String srType, int precision, int scale) {
         if (DataType.isUnsupported(srType)) {

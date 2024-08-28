@@ -28,12 +28,19 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 
 public class StarRocksReaderWriterTest extends BaseFormatTest {
@@ -56,15 +63,17 @@ public class StarRocksReaderWriterTest extends BaseFormatTest {
     @ParameterizedTest
     @MethodSource("testReadAfterWrite")
     public void testReadAfterWrite(String tableName) throws Exception {
+        truncateTable(tableName);
+
         String label = String.format("bypass_write_%s_%s_%s",
-                DB_NAME, tableName, RandomStringUtils.randomAlphabetic(8));
-        Schema schema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName));
-        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName));
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+                dbName, tableName, RandomStringUtils.randomAlphabetic(8));
+        Schema schema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName));
+        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName));
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         assertFalse(partitions.isEmpty());
 
         // begin transaction
-        TransactionResult beginTxnResult = restClient.beginTransaction(DEFAULT_CATALOG, DB_NAME, tableName, label);
+        TransactionResult beginTxnResult = restClient.beginTransaction(DEFAULT_CATALOG, dbName, tableName, label);
         assertTrue(beginTxnResult.isOk());
 
         List<TabletCommitInfo> committedTablets = new ArrayList<>();
@@ -112,18 +121,18 @@ public class StarRocksReaderWriterTest extends BaseFormatTest {
         }
 
         TransactionResult prepareTxnResult = restClient.prepareTransaction(
-                DEFAULT_CATALOG, DB_NAME, beginTxnResult.getLabel(), committedTablets, null);
+                DEFAULT_CATALOG, dbName, beginTxnResult.getLabel(), committedTablets, null);
         assertTrue(prepareTxnResult.isOk());
 
         TransactionResult commitTxnResult = restClient.commitTransaction(
-                DEFAULT_CATALOG, DB_NAME, prepareTxnResult.getLabel());
+                DEFAULT_CATALOG, dbName, prepareTxnResult.getLabel());
         assertTrue(commitTxnResult.isOk());
 
         // read all data test
         int expectedNumRows = 24;
         // read chunk
         long totalRows = 0;
-        partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         for (TablePartition partition : partitions) {
             long version = partition.getVisibleVersion();
             for (TablePartition.Tablet tablet : partition.getTablets()) {
@@ -138,6 +147,7 @@ public class StarRocksReaderWriterTest extends BaseFormatTest {
                     VectorSchemaRoot vsr = reader.getNext();
                     numRows = vsr.getRowCount();
 
+                    System.out.println(vsr.contentToTSVString());
                     checkValue(vsr, numRows);
                     vsr.close();
 
@@ -169,13 +179,13 @@ public class StarRocksReaderWriterTest extends BaseFormatTest {
     @MethodSource("testReadAfterWriteWithJsonFilter")
     public void testReadAfterWriteWithJsonFilter(String tableName) throws Exception {
         String label = String.format("bypass_write_%s_%s_%s",
-                DB_NAME, tableName, RandomStringUtils.randomAlphabetic(8));
-        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName));
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+                dbName, tableName, RandomStringUtils.randomAlphabetic(8));
+        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName));
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         assertFalse(partitions.isEmpty());
 
         // begin transaction
-        TransactionResult beginTxnResult = restClient.beginTransaction(DEFAULT_CATALOG, DB_NAME, tableName, label);
+        TransactionResult beginTxnResult = restClient.beginTransaction(DEFAULT_CATALOG, dbName, tableName, label);
         assertTrue(beginTxnResult.isOk());
 
         List<TabletCommitInfo> committedTablets = new ArrayList<>();
@@ -222,18 +232,18 @@ public class StarRocksReaderWriterTest extends BaseFormatTest {
         }
 
         TransactionResult prepareTxnResult = restClient.prepareTransaction(
-                DEFAULT_CATALOG, DB_NAME, beginTxnResult.getLabel(), committedTablets, null);
+                DEFAULT_CATALOG, dbName, beginTxnResult.getLabel(), committedTablets, null);
         assertTrue(prepareTxnResult.isOk());
 
         TransactionResult commitTxnResult = restClient.commitTransaction(
-                DEFAULT_CATALOG, DB_NAME, prepareTxnResult.getLabel());
+                DEFAULT_CATALOG, dbName, prepareTxnResult.getLabel());
         assertTrue(commitTxnResult.isOk());
 
         // read all data test
         int expectedNumRows = 24;
         // read chunk
         long totalRows = 0;
-        partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         for (TablePartition partition : partitions) {
             long version = partition.getVisibleVersion();
             for (TablePartition.Tablet tablet : partition.getTablets()) {
@@ -269,9 +279,10 @@ public class StarRocksReaderWriterTest extends BaseFormatTest {
         // test with filter
         String requiredColumns = "rowid,c_varchar,c_json";
         String outputColumns = "rowid,c_varchar";
-        String sql = "select rowId, c_varchar from demo." + tableName + " where cast((c_json->'rowid') as int) % 2 = 0";
+        String sql =
+                "select rowId, c_varchar from " + dbName + "." + tableName + " where cast((c_json->'rowid') as int) \\% 2 = 0";
         // get query plan
-        String queryPlan = restClient.getQueryPlan(DB_NAME, tableName, sql).getOpaquedQueryPlan();
+        String queryPlan = restClient.getQueryPlan(dbName, tableName, sql).getOpaquedQueryPlan();
         Set<String> requiredColumnName = new HashSet<>(Arrays.asList(requiredColumns.split(",")));
         Set<String> outputColumnName = new HashSet<>(Arrays.asList(outputColumns.split(",")));
 
@@ -289,7 +300,7 @@ public class StarRocksReaderWriterTest extends BaseFormatTest {
         // read chunk
         int expectedTotalRows = 11;
         totalRows = 0;
-        partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         for (TablePartition partition : partitions) {
             long version = partition.getVisibleVersion();
             for (TablePartition.Tablet tablet : partition.getTablets()) {
@@ -338,18 +349,19 @@ public class StarRocksReaderWriterTest extends BaseFormatTest {
                 Arguments.of("tb_map_array_struct")
         );
     }
+
     @ParameterizedTest
     @MethodSource("testComplexTypeReadAfterWrite")
     public void testComplexTypeReadAfterWrite(String tableName) throws Exception {
         String label = String.format("bypass_write_%s_%s_%s",
-                DB_NAME, tableName, RandomStringUtils.randomAlphabetic(8));
-        Schema schema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName));
-        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName));
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+                dbName, tableName, RandomStringUtils.randomAlphabetic(8));
+        Schema schema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName));
+        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName));
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         assertFalse(partitions.isEmpty());
 
         // begin transaction
-        TransactionResult beginTxnResult = restClient.beginTransaction(DEFAULT_CATALOG, DB_NAME, tableName, label);
+        TransactionResult beginTxnResult = restClient.beginTransaction(DEFAULT_CATALOG, dbName, tableName, label);
         assertTrue(beginTxnResult.isOk());
 
         List<TabletCommitInfo> committedTablets = new ArrayList<>();
@@ -396,18 +408,18 @@ public class StarRocksReaderWriterTest extends BaseFormatTest {
         }
 
         TransactionResult prepareTxnResult = restClient.prepareTransaction(
-                DEFAULT_CATALOG, DB_NAME, beginTxnResult.getLabel(), committedTablets, null);
+                DEFAULT_CATALOG, dbName, beginTxnResult.getLabel(), committedTablets, null);
         assertTrue(prepareTxnResult.isOk());
 
         TransactionResult commitTxnResult = restClient.commitTransaction(
-                DEFAULT_CATALOG, DB_NAME, prepareTxnResult.getLabel());
+                DEFAULT_CATALOG, dbName, prepareTxnResult.getLabel());
         assertTrue(commitTxnResult.isOk());
 
         // read all data test
         int expectedNumRows = 8;
         // read chunk
         long totalRows = 0;
-        partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         for (TablePartition partition : partitions) {
             long version = partition.getVisibleVersion();
             for (TablePartition.Tablet tablet : partition.getTablets()) {

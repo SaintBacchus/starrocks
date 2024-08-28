@@ -21,10 +21,26 @@ import com.google.common.base.Strings;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import com.starrocks.format.rest.RestClient;
-import com.starrocks.proto.TabletSchema.TabletSchemaPB;
-import com.starrocks.proto.TabletSchema;
 import com.starrocks.proto.LakeTypes;
-import org.apache.arrow.vector.*;
+import com.starrocks.proto.TabletSchema;
+import com.starrocks.proto.TabletSchema.TabletSchemaPB;
+import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DateMilliVector;
+import org.apache.arrow.vector.Decimal256Vector;
+import org.apache.arrow.vector.DecimalVector;
+import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float4Vector;
+import org.apache.arrow.vector.Float8Vector;
+import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.SmallIntVector;
+import org.apache.arrow.vector.TimeStampMilliVector;
+import org.apache.arrow.vector.TimeStampVector;
+import org.apache.arrow.vector.TinyIntVector;
+import org.apache.arrow.vector.VarBinaryVector;
+import org.apache.arrow.vector.VarCharVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.complex.ListVector;
 import org.apache.arrow.vector.complex.MapVector;
 import org.apache.arrow.vector.complex.StructVector;
@@ -34,6 +50,7 @@ import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.types.pojo.Schema;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 
 import java.io.File;
@@ -43,45 +60,67 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
 import java.sql.Date;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.*;
 import java.util.stream.Collectors;
 
-import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class BaseFormatTest {
 
     protected static final String DEFAULT_CATALOG = "default_catalog";
 
-    protected static final String DB_NAME = "demo";
-
     protected static final String STARROCKS_FORMAT_QUERY_PLAN = "starrocks.format.query_plan";
     protected static final String STARROCKS_FORMAT_USING_COLUMN_UID = "starrocks.format.using_column_uid";
 
     protected static ConnSettings settings;
 
+    protected static String dbName = "demo";
+
     protected static RestClient restClient;
+
+    protected static Connection dbConn;
 
     @BeforeAll
     public static void init() throws Exception {
         settings = ConnSettings.newInstance();
+
+        if (null != settings.getSrDatabase()) {
+            dbName = settings.getSrDatabase();
+        }
+
+        dbConn = DriverManager.getConnection(
+                settings.getSrFeJdbcUrl(), settings.getSrUser(), settings.getSrPassword()
+        );
 
         restClient = new RestClient.Builder()
                 .setFeEndpoints(settings.getSrFeHttpUrl())
                 .setUsername(settings.getSrUser())
                 .setPassword(settings.getSrPassword())
                 .build();
+    }
+
+    @AfterAll
+    static void afterAll() throws Exception {
+        if (null != dbConn) {
+            dbConn.close();
+        }
+        if (null != restClient) {
+            restClient.close();
+        }
     }
 
     public static Schema toArrowSchema(TabletSchema.TabletSchemaPB tabletSchema) {
@@ -102,7 +141,8 @@ public class BaseFormatTest {
         metadata.put(StarRocksUtils.STARROKCS_COLUMN_TYPE, column.getType());
         metadata.put(StarRocksUtils.STARROKCS_COLUMN_IS_KEY, String.valueOf(column.getIsKey()));
         metadata.put(StarRocksUtils.STARROKCS_COLUMN_MAX_LENGTH, String.valueOf(column.getLength()));
-        metadata.put(StarRocksUtils.STARROKCS_COLUMN_AGGREGATION_TYPE, Optional.ofNullable(column.getAggregation()).orElse("NONE"));
+        metadata.put(StarRocksUtils.STARROKCS_COLUMN_AGGREGATION_TYPE,
+                Optional.ofNullable(column.getAggregation()).orElse("NONE"));
         metadata.put(StarRocksUtils.STARROKCS_COLUMN_IS_AUTO_INCREMENT, String.valueOf(column.getIsAutoIncrement()));
 
         List<Field> children = new ArrayList<>();
@@ -125,7 +165,8 @@ public class BaseFormatTest {
     }
 
 
-    public static void setupTabletMeta(String tabletRootPath, TabletSchemaPB schema, long tabletId, long version) throws IOException {
+    public static void setupTabletMeta(String tabletRootPath, TabletSchemaPB schema, long tabletId, long version)
+            throws IOException {
         File dir = new File(tabletRootPath + "/data");
         assertTrue(dir.mkdirs());
         dir = new File(tabletRootPath + "/log");
@@ -191,10 +232,21 @@ public class BaseFormatTest {
         }
     }
 
+    protected static void truncateTable(String tableName) throws Exception {
+        executeSQL(String.format("TRUNCATE TABLE %s.%s", dbName, tableName));
+    }
+
+    protected static void executeSQL(String srSql) throws Exception {
+        try (PreparedStatement statement = dbConn.prepareStatement(srSql)) {
+            statement.execute();
+        }
+    }
+
     private static void checkFieldValue(Field field, int rowId, FieldVector fieldVector, int rowIdx, int depth) {
         int sign = (rowId % 2 == 0) ? -1 : 1;
         String starRocksTypeName = field.getFieldType().getMetadata().get(StarRocksUtils.STARROKCS_COLUMN_TYPE);
-        assertFalse(Strings.isNullOrEmpty(starRocksTypeName), "column " + field.getName() + " 's starrocks type should not be null.");
+        assertFalse(Strings.isNullOrEmpty(starRocksTypeName),
+                "column " + field.getName() + " 's starrocks type should not be null.");
         switch (starRocksTypeName) {
             case "BOOLEAN":
                 if (rowId % 2 == 0) {
@@ -308,9 +360,11 @@ public class BaseFormatTest {
             case "CHAR":
             case "VARCHAR":
                 if (depth > 0) {
-                    assertEquals(field.getName() + ":name" + rowId + ",d:" + depth, new String(((VarCharVector) fieldVector).get(rowIdx), StandardCharsets.UTF_8));
+                    assertEquals(field.getName() + ":name" + rowId + ",d:" + depth,
+                            new String(((VarCharVector) fieldVector).get(rowIdx), StandardCharsets.UTF_8));
                 } else {
-                    assertEquals(field.getName() + ":name" + rowId, new String(((VarCharVector) fieldVector).get(rowIdx), StandardCharsets.UTF_8));
+                    assertEquals(field.getName() + ":name" + rowId,
+                            new String(((VarCharVector) fieldVector).get(rowIdx), StandardCharsets.UTF_8));
                 }
                 break;
             case "BINARY":
@@ -326,13 +380,13 @@ public class BaseFormatTest {
                 byte[] bitmapValue = ((VarBinaryVector) fieldVector).get(rowIdx);
                 switch (rowId % 4) {
                     case 0:
-                        assertTrue(areByteArraysEqual(new byte[]{0x01, 0x00, 0x00, 0x00, 0x00}, bitmapValue));
+                        assertTrue(areByteArraysEqual(new byte[] {0x01, 0x00, 0x00, 0x00, 0x00}, bitmapValue));
                         break;
                     case 1:
-                        assertTrue(areByteArraysEqual(new byte[]{0x01, (byte) 0xE8, 0x03, 0x00, 0x00}, bitmapValue));
+                        assertTrue(areByteArraysEqual(new byte[] {0x01, (byte) 0xE8, 0x03, 0x00, 0x00}, bitmapValue));
                         break;
                     case 3:
-                        assertTrue(areByteArraysEqual(new byte[]{0x1, (byte) 0xB8, 0xB, 0x0, 0x0}, bitmapValue));
+                        assertTrue(areByteArraysEqual(new byte[] {0x1, (byte) 0xB8, 0xB, 0x0, 0x0}, bitmapValue));
                         break;
                 }
                 break;
@@ -340,13 +394,17 @@ public class BaseFormatTest {
                 byte[] hllValue = ((VarBinaryVector) fieldVector).get(rowIdx);
                 switch (rowId % 4) {
                     case 0:
-                        assertTrue(areByteArraysEqual(new byte[]{0x00}, hllValue));
+                        assertTrue(areByteArraysEqual(new byte[] {0x00}, hllValue));
                         break;
                     case 1:
-                        assertTrue(areByteArraysEqual(new byte[]{0x1, 0x1, 0x44, 0x6, (byte) 0xC3, (byte) 0x80, (byte) 0x9E, (byte) 0x9D, (byte) 0xE6, 0x14}, hllValue));
+                        assertTrue(areByteArraysEqual(
+                                new byte[] {0x1, 0x1, 0x44, 0x6, (byte) 0xC3, (byte) 0x80, (byte) 0x9E, (byte) 0x9D, (byte) 0xE6,
+                                        0x14}, hllValue));
                         break;
                     case 3:
-                        assertTrue(areByteArraysEqual(new byte[]{0x1, 0x1, (byte) 0x9A, 0x5, (byte) 0xE4, (byte) 0xE6, 0x65, 0x76, 0x4, 0x28}, hllValue));
+                        assertTrue(areByteArraysEqual(
+                                new byte[] {0x1, 0x1, (byte) 0x9A, 0x5, (byte) 0xE4, (byte) 0xE6, 0x65, 0x76, 0x4, 0x28},
+                                hllValue));
                         break;
                 }
                 break;
@@ -408,13 +466,12 @@ public class BaseFormatTest {
                 int intVal = rowId * 100 * sign;
                 Object arrayValue = ((ListVector) fieldVector).getObject(rowIdx);
                 ArrayList<Integer> resultSet = (ArrayList<Integer>) arrayValue;
-                for (int arrayIndex =0; arrayIndex < elementSize; arrayIndex++ ) {
+                for (int arrayIndex = 0; arrayIndex < elementSize; arrayIndex++) {
                     assertEquals(intVal + depth + arrayIndex, resultSet.get(arrayIndex));
                 }
             }
             break;
-            case "MAP":
-            {
+            case "MAP": {
                 List<FieldVector> children = fieldVector.getChildrenFromFields();
                 assertEquals(1, children.size());
                 int elementSize = rowId % 4;
@@ -422,7 +479,7 @@ public class BaseFormatTest {
                 Object result = ((MapVector) fieldVector).getObject(rowIdx);
                 ArrayList<?> resultSet = (ArrayList<?>) result;
                 assertEquals(elementSize, resultSet.size());
-                for (int arrayIndex =0; arrayIndex < elementSize; arrayIndex++ ) {
+                for (int arrayIndex = 0; arrayIndex < elementSize; arrayIndex++) {
                     Map<?, ?> resultStruct = (Map<?, ?>) resultSet.get(arrayIndex);
                     assertEquals(intVal + depth + arrayIndex, getResultKey(resultStruct));
                     assertEquals("mapvalue:" + (intVal + depth + arrayIndex), getResultValue(resultStruct).toString());
@@ -432,7 +489,7 @@ public class BaseFormatTest {
             case "STRUCT": {
                 List<FieldVector> children = ((StructVector) fieldVector).getChildrenFromFields();
                 assertEquals(field.getChildren().size(), children.size());
-                for (FieldVector childVector: children) {
+                for (FieldVector childVector : children) {
                     checkFieldValue(childVector.getField(), rowId, childVector, rowIdx, depth + 1);
                 }
             }
@@ -587,8 +644,8 @@ public class BaseFormatTest {
             case CHAR:
             case VARCHAR: {
                 String strValue = field.getName() + ":name" + rowId;
-                if(depth > 0) {
-                    strValue+= ",d:" + depth;
+                if (depth > 0) {
+                    strValue += ",d:" + depth;
                 }
                 ((VarCharVector) fieldVector).setSafe(rowIdx, strValue.getBytes());
             }
@@ -694,7 +751,7 @@ public class BaseFormatTest {
                     if (childVector instanceof IntVector) {
                         int intVal = rowId * 100 * sign;
                         int startOffset = childVector.getValueCount();
-                        for (int arrayIndex =0; arrayIndex < elementSize; arrayIndex++ ) {
+                        for (int arrayIndex = 0; arrayIndex < elementSize; arrayIndex++) {
                             ((IntVector) childVector).setSafe(startOffset + arrayIndex, intVal + depth + arrayIndex);
                         }
                         childVector.setValueCount(startOffset + elementSize);
@@ -711,7 +768,7 @@ public class BaseFormatTest {
                 mapWriter.setPosition(rowIdx);
                 mapWriter.startMap();
                 int intVal = rowId * 100 * sign;
-                for (int arrayIndex =0; arrayIndex < elementSize; arrayIndex++ ) {
+                for (int arrayIndex = 0; arrayIndex < elementSize; arrayIndex++) {
                     mapWriter.startEntry();
                     mapWriter.key().integer().writeInt(intVal + depth + arrayIndex);
                     mapWriter.value().varChar().writeVarChar("mapvalue:" + (intVal + depth + arrayIndex));

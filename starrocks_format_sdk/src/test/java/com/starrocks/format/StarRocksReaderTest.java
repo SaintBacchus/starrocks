@@ -103,9 +103,29 @@ public class StarRocksReaderTest extends BaseFormatTest {
 
     private static Stream<Arguments> testReadWithFilterProject() {
         return Stream.of(
-                Arguments.of("tb_all_primitivetype_read_two_key_unique", 1, "rowid,c_date,c_datetime,c_smallint",  "rowid,c_date,c_datetime", "select rowId, c_date, c_datetime from demo.tb_all_primitivetype_read_two_key_unique where c_smallint = 30"),
-                Arguments.of("tb_part_read_two_key_unique", 1, "rowid, part_int, part_date, c_date, c_datetime, c_bigint",  "rowid, c_bigint, c_date, c_datetime", "select * from demo.tb_part_read_two_key_unique where part_date = '2024-06-03'"),
-                Arguments.of("tb_part_read_part_key_first", 1, "rowid, part_int, part_date, c_date, c_datetime, c_bigint",  "rowid, c_bigint, c_date, c_datetime", "select * from demo.tb_part_read_part_key_first where part_date = '2024-06-03'")
+                Arguments.of(
+                        "tb_all_primitivetype_read_two_key_unique",
+                        1,
+                        "rowid,c_date,c_datetime,c_smallint",
+                        "rowid,c_date,c_datetime",
+                        String.format(
+                                "select rowId, c_date, c_datetime from %s.tb_all_primitivetype_read_two_key_unique where c_smallint = 30",
+                                dbName)
+                ),
+                Arguments.of(
+                        "tb_part_read_two_key_unique",
+                        1,
+                        "rowid, part_int, part_date, c_date, c_datetime, c_bigint",
+                        "rowid, c_bigint, c_date, c_datetime",
+                        String.format("select * from %s.tb_part_read_two_key_unique where part_date = '2024-06-03'", dbName)
+                ),
+                Arguments.of(
+                        "tb_part_read_part_key_first",
+                        1,
+                        "rowid, part_int, part_date, c_date, c_datetime, c_bigint",
+                        "rowid, c_bigint, c_date, c_datetime",
+                        String.format("select * from %s.tb_part_read_part_key_first where part_date = '2024-06-03'", dbName)
+                )
         );
     }
 
@@ -125,8 +145,8 @@ public class StarRocksReaderTest extends BaseFormatTest {
     @ParameterizedTest
     @MethodSource
     public void testRead(String tableName, int expectedNumRows) throws Exception {
-        Schema schema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName));
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        Schema schema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName));
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         assertFalse(partitions.isEmpty());
 
         // read chunk
@@ -167,8 +187,8 @@ public class StarRocksReaderTest extends BaseFormatTest {
     @ParameterizedTest
     @MethodSource
     public void testReadWithFilter(String tableName, long expectedTotalRows, String queryPlan) throws Exception {
-        Schema schema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName));
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        Schema schema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName));
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         assertFalse(partitions.isEmpty());
 
         // read chunk
@@ -218,11 +238,11 @@ public class StarRocksReaderTest extends BaseFormatTest {
     @ParameterizedTest
     @MethodSource
     public void testReadWithFilterProject(String tableName, long expectedTotalRows, String requiredColumns, String outputColumns, String sql) throws Exception {
-        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName));
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName));
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         assertFalse(partitions.isEmpty());
 
-        String queryPlan = restClient.getQueryPlan(DB_NAME, tableName, sql).getOpaquedQueryPlan();
+        String queryPlan = restClient.getQueryPlan(dbName, tableName, sql).getOpaquedQueryPlan();
 
         Set<String> requiredColumnName = Arrays.stream(requiredColumns.split(",")).map(String::trim).collect(Collectors.toSet());
         Set<String> outputColumnName = Arrays.stream(outputColumns.split(",")).map(String::trim).collect(Collectors.toSet());
@@ -286,8 +306,8 @@ public class StarRocksReaderTest extends BaseFormatTest {
         Set<String> requiredColumnName = new HashSet<>(Arrays.asList("c_tinyint", "c_smallint"));
         Set<String> outputColumnName = new HashSet<>(Arrays.asList("c_tinyint", "c_date"));
 
-        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName));
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName));
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         assertFalse(partitions.isEmpty());
 
         // resolve required schema
@@ -329,8 +349,8 @@ public class StarRocksReaderTest extends BaseFormatTest {
     @Test
     public void testExceptionWithWrongPlan() throws Exception {
         String tableName = "tb_all_primitivetype_read_unique";
-        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName));
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName));
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         assertFalse(partitions.isEmpty());
 
         // read chunk
@@ -361,8 +381,8 @@ public class StarRocksReaderTest extends BaseFormatTest {
     @ParameterizedTest
     @MethodSource
     public void testReadColumnPruning(String tableName, long expectedTotalRows, boolean withKey) throws Exception {
-        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName));
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName));
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         assertFalse(partitions.isEmpty());
         // setup required schema
         List<Field> fields = new ArrayList<>();
@@ -514,8 +534,8 @@ public class StarRocksReaderTest extends BaseFormatTest {
         long version = 3;
         String tableName = "tb_all_primitivetype_read_duplicate";
 
-        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName));
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        Schema tableSchema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName));
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         assertFalse(partitions.isEmpty());
 
         // read chunk
@@ -536,7 +556,7 @@ public class StarRocksReaderTest extends BaseFormatTest {
                         BigDecimal bd = (BigDecimal) vector.getObject(0);
                         fail();
                     } catch (ClassCastException e) {
-                        assertTrue(e.getMessage().contains("java.lang.Integer cannot be cast to java.math.BigDecimal"), e.getMessage());
+                        assertTrue(e.getMessage().contains("java.lang.Integer cannot be cast to java.math.BigDecimal"));
                     }
                     vsr.close();
                     reader.close();

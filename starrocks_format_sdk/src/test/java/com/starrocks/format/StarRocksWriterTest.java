@@ -57,13 +57,13 @@ public class StarRocksWriterTest extends BaseFormatTest {
     @MethodSource("transactionWriteTables")
     public void testTransactionWrite(String tableName) throws Exception {
         String label = String.format("bypass_write_%s_%s_%s",
-                DB_NAME, tableName, RandomStringUtils.randomAlphabetic(8));
-        Schema schema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName));
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+                dbName, tableName, RandomStringUtils.randomAlphabetic(8));
+        Schema schema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName));
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         assertFalse(partitions.isEmpty());
 
         // begin transaction
-        TransactionResult beginTxnResult = restClient.beginTransaction(DEFAULT_CATALOG, DB_NAME, tableName, label);
+        TransactionResult beginTxnResult = restClient.beginTransaction(DEFAULT_CATALOG, dbName, tableName, label);
         assertTrue(beginTxnResult.isOk());
 
         List<TabletCommitInfo> committedTablets = new ArrayList<>();
@@ -110,11 +110,11 @@ public class StarRocksWriterTest extends BaseFormatTest {
         }
 
         TransactionResult prepareTxnResult = restClient.prepareTransaction(
-                DEFAULT_CATALOG, DB_NAME, beginTxnResult.getLabel(), committedTablets, null);
+                DEFAULT_CATALOG, dbName, beginTxnResult.getLabel(), committedTablets, null);
         assertTrue(prepareTxnResult.isOk());
 
         TransactionResult commitTxnResult = restClient.commitTransaction(
-                DEFAULT_CATALOG, DB_NAME, prepareTxnResult.getLabel());
+                DEFAULT_CATALOG, dbName, prepareTxnResult.getLabel());
         assertTrue(commitTxnResult.isOk());
     }
 

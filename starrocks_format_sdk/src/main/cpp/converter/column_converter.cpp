@@ -54,7 +54,7 @@ arrow::Result<std::shared_ptr<ColumnConverter>> ColumnConverter::create(
         CONVERTER_CASE(arrow::Type::INT64, starrocks::LogicalType::TYPE_BIGINT, PrimitiveConverter)
         CONVERTER_CASE(arrow::Type::FLOAT, starrocks::LogicalType::TYPE_FLOAT, PrimitiveConverter)
         CONVERTER_CASE(arrow::Type::DOUBLE, starrocks::LogicalType::TYPE_DOUBLE, PrimitiveConverter)
-        CONVERTER_CASE(arrow::Type::DECIMAL128, starrocks::LogicalType::TYPE_LARGEINT, PrimitiveConverter)
+        CONVERTER_CASE(arrow::Type::DECIMAL256, starrocks::LogicalType::TYPE_LARGEINT, PrimitiveConverter)
         CONVERTER_CASE(arrow::Type::DECIMAL128, starrocks::LogicalType::TYPE_DECIMAL32, PrimitiveConverter)
         CONVERTER_CASE(arrow::Type::DECIMAL128, starrocks::LogicalType::TYPE_DECIMAL64, PrimitiveConverter)
         CONVERTER_CASE(arrow::Type::DECIMAL128, starrocks::LogicalType::TYPE_DECIMAL128, PrimitiveConverter)

@@ -44,9 +44,10 @@ import java.math.RoundingMode;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.sql.Date;
-import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -197,9 +198,11 @@ public class BaseFormatTest {
         switch (starRocksTypeName) {
             case "BOOLEAN":
                 if (rowId % 2 == 0) {
-                    assertTrue(((BitVector) fieldVector).getObject(rowIdx));
+                    assertTrue(((BitVector) fieldVector).getObject(rowIdx),
+                            "rowid: " + rowId + " value is wrong: " + ((BitVector) fieldVector).getObject(rowIdx));
                 } else {
-                    assertFalse(((BitVector) fieldVector).getObject(rowIdx));
+                    assertFalse(((BitVector) fieldVector).getObject(rowIdx),
+                            "rowid: " + rowId + " value is wrong: " + ((BitVector) fieldVector).getObject(rowIdx));
                 }
                 break;
             case "TINYINT":
@@ -208,7 +211,8 @@ public class BaseFormatTest {
                 } else if (rowId == 1) {
                     assertEquals(Byte.MIN_VALUE, ((TinyIntVector) fieldVector).get(rowIdx));
                 } else {
-                    assertEquals(rowId * sign, ((TinyIntVector) fieldVector).get(rowIdx));
+                    byte value = (byte) (rowId * sign);
+                    assertEquals(value, ((TinyIntVector) fieldVector).get(rowIdx));
                 }
                 break;
             case "SMALLINT":
@@ -218,7 +222,8 @@ public class BaseFormatTest {
                 } else if (rowId == 1) {
                     assertEquals(Short.MIN_VALUE, ((SmallIntVector) fieldVector).get(rowIdx));
                 } else {
-                    assertEquals(rowId * 10 * sign, ((SmallIntVector) fieldVector).get(rowIdx));
+                    short value = (short) (rowId * 10 * sign);
+                    assertEquals(value, ((SmallIntVector) fieldVector).get(rowIdx));
                 }
                 break;
             case "INT": {
@@ -254,7 +259,7 @@ public class BaseFormatTest {
                 } else {
                     bd2 = BigDecimal.valueOf(rowId * 10000L * sign);
                 }
-                assertEquals(bd2, ((DecimalVector) fieldVector).getObject(rowIdx));
+                assertEquals(bd2, ((Decimal256Vector) fieldVector).getObject(rowIdx));
                 break;
             case "FLOAT":
             case "DOUBLE":
@@ -319,7 +324,7 @@ public class BaseFormatTest {
                 break;
             case "BITMAP":
                 byte[] bitmapValue = ((VarBinaryVector) fieldVector).get(rowIdx);
-                switch (rowId) {
+                switch (rowId % 4) {
                     case 0:
                         assertTrue(areByteArraysEqual(new byte[]{0x01, 0x00, 0x00, 0x00, 0x00}, bitmapValue));
                         break;
@@ -333,7 +338,7 @@ public class BaseFormatTest {
                 break;
             case "HLL":
                 byte[] hllValue = ((VarBinaryVector) fieldVector).get(rowIdx);
-                switch (rowId) {
+                switch (rowId % 4) {
                     case 0:
                         assertTrue(areByteArraysEqual(new byte[]{0x00}, hllValue));
                         break;
@@ -387,7 +392,7 @@ public class BaseFormatTest {
             case "DATETIME":
                 LocalDateTime ts;
                 if (rowId == 0) {
-                    ts = LocalDateTime.parse("1800-11-20T12:40:39");
+                    ts = LocalDateTime.parse("1800-11-20T12:34:56");
                 } else if (rowId == 1) {
                     ts = LocalDateTime.parse("4096-11-30T11:22:33");
                 } else {
@@ -479,7 +484,7 @@ public class BaseFormatTest {
         DataType dataType = DataType.fromLiteral(starRocksTypeName).get();
         switch (dataType) {
             case BOOLEAN:
-                ((BitVector) fieldVector).setSafe(rowIdx, rowId % 2);
+                ((BitVector) fieldVector).setSafe(rowIdx, 1- (rowId % 2));
                 break;
             case TINYINT:
                 if (rowId == 0) {
@@ -519,11 +524,11 @@ public class BaseFormatTest {
                 break;
             case LARGEINT:
                 if (rowId == 0) {
-                    ((DecimalVector) fieldVector).setSafe(rowIdx, new BigDecimal("99999999999999999999999999999999999999"));
+                    ((Decimal256Vector) fieldVector).setSafe(rowIdx, new BigDecimal("99999999999999999999999999999999999999"));
                 } else if (rowId == 1) {
-                    ((DecimalVector) fieldVector).setSafe(rowIdx, new BigDecimal("-99999999999999999999999999999999999999"));
+                    ((Decimal256Vector) fieldVector).setSafe(rowIdx, new BigDecimal("-99999999999999999999999999999999999999"));
                 } else {
-                    ((DecimalVector) fieldVector).setSafe(rowIdx, BigDecimal.valueOf(rowId * 10000L * sign));
+                    ((Decimal256Vector) fieldVector).setSafe(rowIdx, BigDecimal.valueOf(rowId * 10000L * sign));
                 }
                 break;
             case FLOAT:
@@ -589,8 +594,38 @@ public class BaseFormatTest {
             }
             break;
             case OBJECT:
-            case BITMAP:
-            case HLL:
+            case BITMAP: {
+                byte[] bitmapValue = new byte[]{0x00};
+                switch (rowId % 4) {
+                    case 0:
+                        bitmapValue = new byte[]{0x01, 0x00, 0x00, 0x00, 0x00};
+                        break;
+                    case 1:
+                        bitmapValue = new byte[]{0x01, (byte) 0xE8, 0x03, 0x00, 0x00};
+                        break;
+                    case 3:
+                        bitmapValue = new byte[]{0x1, (byte) 0xB8, 0xB, 0x0, 0x0};
+                        break;
+                }
+                ((VarBinaryVector) fieldVector).setSafe(rowIdx, bitmapValue);
+            }
+            break;
+            case HLL: {
+                byte[] hllValue = new byte[]{0x00};
+                switch (rowId % 4) {
+                    case 0:
+                        hllValue = new byte[]{0x00};
+                        break;
+                    case 1:
+                        hllValue = new byte[]{0x1, 0x1, 0x44, 0x6, (byte) 0xC3, (byte) 0x80, (byte) 0x9E, (byte) 0x9D, (byte) 0xE6, 0x14};
+                        break;
+                    case 3:
+                        hllValue = new byte[]{0x1, 0x1, (byte) 0x9A, 0x5, (byte) 0xE4, (byte) 0xE6, 0x65, 0x76, 0x4, 0x28};
+                        break;
+                }
+                ((VarBinaryVector) fieldVector).setSafe(rowIdx, hllValue);
+            }
+            break;
             case BINARY:
             case VARBINARY:
                 String valuePrefix = field.getName() + ":name" + rowId + ":";
@@ -639,16 +674,17 @@ public class BaseFormatTest {
             }
             break;
             case DATETIME:
-                Timestamp ts;
+                LocalDateTime ts;
                 if (rowId == 0) {
-                    ts = Timestamp.valueOf("1800-11-20 12:34:56");
+                    ts = LocalDateTime.parse("1800-11-20T12:34:56");
                 } else if (rowId == 1) {
-                    ts = Timestamp.valueOf("4096-11-30 11:22:33");
+                    ts = LocalDateTime.parse("4096-11-30T11:22:33");
                 } else {
-                    ts = Timestamp.valueOf("2023-12-30 22:33:44");
-                    ts.setYear(123 + rowId * sign);
+                    ts = LocalDateTime.parse("2023-12-30T22:33:44");
+                    ts = ts.withYear(1900 + 123 + rowId * sign);
                 }
-                ((TimeStampVector) fieldVector).setSafe(rowIdx, ts.getTime());
+                ZoneOffset offset = ZoneId.systemDefault().getRules().getOffset(ts);
+                ((TimeStampVector) fieldVector).setSafe(rowIdx, ts.toInstant(offset).toEpochMilli());
                 break;
             case ARRAY: {
                 List<FieldVector> children = fieldVector.getChildrenFromFields();

@@ -136,7 +136,7 @@ public class StarRocksUtils {
                 arrowType = new ArrowType.Int(64, true);
                 break;
             case "LARGEINT":
-                arrowType = new ArrowType.Decimal(38, 0, 128);
+                arrowType = new ArrowType.Decimal(40, 0, 256);
                 break;
             case "FLOAT":
                 arrowType = new ArrowType.FloatingPoint(FloatingPointPrecision.SINGLE);

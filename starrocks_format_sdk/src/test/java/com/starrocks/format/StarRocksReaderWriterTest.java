@@ -45,11 +45,11 @@ public class StarRocksReaderWriterTest extends BaseFormatTest {
 
     private static Stream<Arguments> testReadAfterWrite() {
         return Stream.of(
-                Arguments.of("tb_json_two_key_primary"),
-                Arguments.of("tb_json_two_key_unique"),
                 Arguments.of("tb_binary_two_key_duplicate"),
                 Arguments.of("tb_binary_two_key_primary"),
-                Arguments.of("tb_binary_two_key_unique")
+                Arguments.of("tb_binary_two_key_unique"),
+                Arguments.of("tb_read_write_all_type_unique"),
+                Arguments.of("tb_read_write_all_type_primary")
         );
     }
 
@@ -76,7 +76,7 @@ public class StarRocksReaderWriterTest extends BaseFormatTest {
             for (TablePartition.Tablet tablet : tablets) {
                 Long tabletId = tablet.getId();
                 Long backendId = tablet.getPrimaryComputeNodeId();
-                int startId = tabletIndex * 1000;
+                int startId = tabletIndex * 300;
                 tabletIndex++;
 
                 try {
@@ -86,16 +86,17 @@ public class StarRocksReaderWriterTest extends BaseFormatTest {
                             partition.getStoragePath(),
                             settings.toMap());
                     writer.open();
-                    // write use chunk interface
-                    VectorSchemaRoot vsr = VectorSchemaRoot.create(tableSchema, writer.getRootAllocator());
+                    // write use arrow interface
+                    try (VectorSchemaRoot vsr = VectorSchemaRoot.create(tableSchema, writer.getRootAllocator())) {
 
-                    fillSampleData(vsr, startId, 4);
-                    writer.write(vsr);
-                    vsr.close();
+                        fillSampleData(vsr, startId, 4);
+                        writer.write(vsr);
+                        vsr.clear();
 
-                    fillSampleData(vsr, startId + 200, 4);
-                    writer.write(vsr);
-                    vsr.close();
+                        fillSampleData(vsr, startId + 100, 4);
+                        writer.write(vsr);
+                        vsr.clear();
+                    }
 
                     writer.flush();
                     writer.finish();
@@ -371,7 +372,7 @@ public class StarRocksReaderWriterTest extends BaseFormatTest {
                             settings.toMap());
                     writer.open();
                     // write use chunk interface
-                    try(VectorSchemaRoot vsr = VectorSchemaRoot.create(tableSchema, writer.getRootAllocator())) {
+                    try (VectorSchemaRoot vsr = VectorSchemaRoot.create(tableSchema, writer.getRootAllocator())) {
 
                         fillSampleData(vsr, startId, 4);
                         writer.write(vsr);

@@ -22,6 +22,7 @@
 #include <arrow/status.h>
 #include <arrow/type.h>
 #include <glog/logging.h>
+#include <array>
 // project dependencies
 #include "converter/column_converter.h"
 #include "format/format_utils.h"
@@ -82,8 +83,7 @@ public:
                 } else {
                     ARROW_RETURN_NOT_OK(builder->Append(column_data[i].to_unixtime()));
                 }
-            } else if constexpr (SR_TYPE == starrocks::LogicalType::TYPE_LARGEINT ||
-                                 SR_TYPE == starrocks::LogicalType::TYPE_DECIMAL32 ||
+            } else if constexpr (SR_TYPE == starrocks::LogicalType::TYPE_DECIMAL32 ||
                                  SR_TYPE == starrocks::LogicalType::TYPE_DECIMAL64 ||
                                  SR_TYPE == starrocks::LogicalType::TYPE_DECIMAL128) {
                 int128_t c_value = column_data[i];
@@ -91,16 +91,16 @@ public:
                 uint64_t low = c_value;
                 arrow::Decimal128 value(high, low);
                 ARROW_RETURN_NOT_OK(builder->Append(value));
+            } else if constexpr (SR_TYPE == starrocks::LogicalType::TYPE_LARGEINT) {
+                int128_t c_value = column_data[i];
+                int64_t high = c_value >> 64;
+                uint64_t low = c_value;
+                arrow::Decimal256 value(arrow::Decimal128(high, low));
+                ARROW_RETURN_NOT_OK(builder->Append(value));
             } else {
                 ARROW_RETURN_NOT_OK(builder->Append((column_data[i])));
             }
         }
-        // // copy null bitmap
-        // if (column->is_nullable()) {
-        //     auto nullable = down_cast<NullableColumn*>(column.get());
-        //     builder->AppendToBitmap(nullable->null_column_data().data(), num_rows);
-        //     builder->UnsafeAppendToBitmap(nullable->null_column_data());
-        // }
 
         return builder->Finish();
     }
@@ -137,8 +137,7 @@ public:
                 }
                 data_column->get_data()[i] = value;
             }
-        } else if constexpr (SR_TYPE == starrocks::LogicalType::TYPE_LARGEINT ||
-                             SR_TYPE == starrocks::LogicalType::TYPE_DECIMAL32 ||
+        } else if constexpr (SR_TYPE == starrocks::LogicalType::TYPE_DECIMAL32 ||
                              SR_TYPE == starrocks::LogicalType::TYPE_DECIMAL64 ||
                              SR_TYPE == starrocks::LogicalType::TYPE_DECIMAL128) {
             for (size_t i = 0; i < num_rows; ++i) {
@@ -153,11 +152,23 @@ public:
                 }
                 data_column->get_data()[i] = value;
             }
+        } else if constexpr (SR_TYPE == starrocks::LogicalType::TYPE_LARGEINT) {
+            for (size_t i = 0; i < num_rows; ++i) {
+                SrCppType value = 0;
+                arrow::Decimal256 arrow_value(real_array->GetValue(i));
+                if (arrow::Decimal256::Abs(arrow_value) > arrow::Decimal256::GetMaxValue(40)) {
+                    return arrow::Status::Invalid("The value ", arrow_value, " is exceed the max of largeint!");
+                }
+                const auto value_array = arrow_value.little_endian_array();
+                value = value_array[1];
+                value = value << 64 | value_array[0];
+                data_column->get_data()[i] = value;
+            }
         } else if constexpr (SR_TYPE == starrocks::LogicalType::TYPE_BOOLEAN) {
             // arrow boolean use bitmap to storage the true/false,
             // so we can not copy memory directly.
             for (size_t i = 0; i < num_rows; ++i) {
-                data_column->get_data()[i] = real_array->IsNull(i);
+                data_column->get_data()[i] = real_array->Value(i);
             }
         } else {
             const ArrowCType* array_data = real_array->raw_values();

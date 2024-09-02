@@ -10,6 +10,7 @@ jobs:
     runs-on:
       spec: m1.8xlarge
     steps:
+      - uses: actions/setup-proxy
       - name: fe
         commands:
           - mkdir -p /root/.m2/
@@ -21,6 +22,7 @@ jobs:
     runs-on:
       spec: m1.8xlarge
     steps:
+      - uses: actions/setup-proxy
       - name: be
         commands:
           # -j 12 to avoid kill by system while linking
@@ -33,6 +35,7 @@ jobs:
     runs-on:
       spec: m1.8xlarge
     steps:
+      - uses: actions/setup-proxy
       - name: run-sr-format-sdk-test
         commands:
           - mkdir -p /root/.m2/

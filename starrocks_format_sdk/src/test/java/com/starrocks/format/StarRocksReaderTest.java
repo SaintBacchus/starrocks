@@ -536,7 +536,7 @@ public class StarRocksReaderTest extends BaseFormatTest {
                         BigDecimal bd = (BigDecimal) vector.getObject(0);
                         fail();
                     } catch (ClassCastException e) {
-                        assertTrue(e.getMessage().contains("class java.lang.Integer cannot be cast to class java.math.BigDecimal"));
+                        assertTrue(e.getMessage().contains("java.lang.Integer cannot be cast to java.math.BigDecimal"), e.getMessage());
                     }
                     vsr.close();
                     reader.close();

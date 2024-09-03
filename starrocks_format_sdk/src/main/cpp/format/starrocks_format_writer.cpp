@@ -15,8 +15,6 @@
 
 #include <glog/logging.h>
 #include <json2pb/json_to_pb.h>
-
-#include <glog/logging.h>
 //arrow dependencies
 #include "arrow/array.h"
 #include "arrow/c/bridge.h"
@@ -185,6 +183,7 @@ private:
             return Status::InternalError("_tablet_schema was not defined");
         }
     }
+
     Status finish_txn_log() {
         auto txn_log = std::make_shared<TxnLog>();
         txn_log->set_tablet_id(_tablet_id);

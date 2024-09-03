@@ -38,7 +38,7 @@ public class Validator {
 
         for (int i = 0; i < tableSchema.getColumns().size(); i++) {
             // 2.1 large int
-            if (tableSchema.getColumns().get(i).getPrimitiveType().equalsIgnoreCase("LargeInt")) {
+            if (tableSchema.getColumns().get(i).getType().getName().equalsIgnoreCase("LargeInt")) {
                 throw new LoadNonSupportException("Column type: LargeInt was not support for segment load.");
             }
 

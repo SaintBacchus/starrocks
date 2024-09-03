@@ -1,4 +1,4 @@
-drop database if EXISTS demo;
+drop database if EXISTS demo force;
 
 create database demo;
 use demo;

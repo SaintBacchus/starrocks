@@ -70,9 +70,6 @@ include_directories(${YOUR_DIRECTORY})
 include_directories(
     ${SRC_DIR}/
     ${GENSRC_DIR}/
-    SYSTEM ${BE_SRC_DIR}
-    SYSTEM ${THIRDPARTY_DIR}/include
-    SYSTEM ${GPERFTOOLS_HOME}/include
 )
 
 
@@ -83,7 +80,16 @@ set_target_properties(jvm PROPERTIES IMPORTED_LOCATION ${LIB_JVM})
 include_directories(${JAVA_HOME}/include)
 include_directories(${JAVA_HOME}/include/linux)
 
+# The arrow include must before the be be thirdparty includes.
+add_library(arrow STATIC IMPORTED)
+set_target_properties(arrow PROPERTIES IMPORTED_LOCATION ${BASE_DIR}/arrow/cpp/build/release/libarrow.a)
+include_directories(SYSTEM ${BASE_DIR}/arrow/cpp/src/)
 
+include_directories(
+    SYSTEM ${BE_SRC_DIR}
+    SYSTEM ${THIRDPARTY_DIR}/include
+    SYSTEM ${GPERFTOOLS_HOME}/include
+)
 # compiler flags that are common across debug/release builds
 #  -Wall: Enable all warnings.
 #  -Wno-sign-compare: suppress warnings for comparison between signed and unsigned
@@ -144,6 +150,7 @@ FILE(GLOB SC_FILES "*.cpp" "*.h")
 
 # internal static dependenies
 add_subdirectory(${SRC_DIR}/format)
+add_subdirectory(${SRC_DIR}/converter)
 
 # external dynamic dependenies
 add_library(starrocks_format SHARED IMPORTED)
@@ -153,8 +160,13 @@ set_target_properties(starrocks_format PROPERTIES IMPORTED_LOCATION ${STARROCKS_
 add_library(${TARGET_NAME} SHARED ${SC_FILES})
 
 target_link_libraries(${TARGET_NAME}
+    -Wl,-Bsymbolic
     format
+    converter
     starrocks_format
+    -Wl,--whole-archive
+    arrow
+    -Wl,--no-whole-archive
     -static-libstdc++
     -static-libgcc
 )

@@ -40,6 +40,9 @@ public class ConnSettings {
     @Option("starrocks.fe.jdbc.url")
     private String srFeJdbcUrl = "jdbc:mysql://127.0.0.1:9030";
 
+    @Option("starrocks.database")
+    private String srDatabase;
+
     @Option("starrocks.user")
     private String srUser = "root";
 
@@ -125,6 +128,14 @@ public class ConnSettings {
 
     public void setSrFeJdbcUrl(String srFeJdbcUrl) {
         this.srFeJdbcUrl = srFeJdbcUrl;
+    }
+
+    public String getSrDatabase() {
+        return srDatabase;
+    }
+
+    public void setSrDatabase(String srDatabase) {
+        this.srDatabase = srDatabase;
     }
 
     public String getSrUser() {

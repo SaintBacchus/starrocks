@@ -249,21 +249,4 @@ public class TableSchema {
     public void setCompressionType(String compressionType) {
         this.compressionType = compressionType;
     }
-
-    public String isFastSchemaChange() {
-        if (properties == null) {
-            return "false";
-        }
-        if (properties.containsKey("fast_schema_evolution")) {
-            if (properties.get("fast_schema_evolution").equalsIgnoreCase("false")) {
-                return "false";
-            } else if (properties.get("fast_schema_evolution").equalsIgnoreCase("true")) {
-                return "true";
-            } else {
-                return "false";
-            }
-        } else {
-            return "false";
-        }
-    }
 }

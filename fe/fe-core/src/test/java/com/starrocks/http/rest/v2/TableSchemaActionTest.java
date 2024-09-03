@@ -136,11 +136,12 @@ public class TableSchemaActionTest extends StarRocksHttpTestCase {
             {
                 ColumnView column = columns.get(0);
                 assertEquals("c1", column.getName());
-                assertEquals(PrimitiveType.DOUBLE.toString(), column.getPrimitiveType());
-                assertEquals(8, column.getPrimitiveTypeSize().intValue());
-                assertEquals(Type.DOUBLE.getColumnSize(), column.getColumnSize());
-                assertEquals(0, column.getPrecision().intValue());
-                assertEquals(0, column.getScale().intValue());
+                ColumnView.ScalarTypeView colType = assertColType(column.getType(), ColumnView.ScalarTypeView.class);
+                assertEquals(PrimitiveType.DOUBLE.toString(), colType.getName());
+                assertEquals(8, colType.getTypeSize().intValue());
+                assertEquals(Type.DOUBLE.getColumnSize(), colType.getColumnSize());
+                assertEquals(15, colType.getPrecision().intValue());
+                assertEquals(0, colType.getScale().intValue());
                 assertNull(column.getAggregationType());
                 assertTrue(column.getKey());
                 assertFalse(column.getAllowNull());
@@ -155,11 +156,12 @@ public class TableSchemaActionTest extends StarRocksHttpTestCase {
             {
                 ColumnView column = columns.get(1);
                 assertEquals("c2", column.getName());
-                assertEquals(PrimitiveType.DECIMAL64.toString(), column.getPrimitiveType());
-                assertEquals(8, column.getPrimitiveTypeSize().intValue());
-                assertEquals(Type.DEFAULT_DECIMAL64.getColumnSize(), column.getColumnSize());
-                assertEquals(18, column.getPrecision().intValue());
-                assertEquals(6, column.getScale().intValue());
+                ColumnView.ScalarTypeView colType = assertColType(column.getType(), ColumnView.ScalarTypeView.class);
+                assertEquals(PrimitiveType.DECIMAL64.toString(), colType.getName());
+                assertEquals(8, colType.getTypeSize().intValue());
+                assertEquals(Type.DEFAULT_DECIMAL64.getColumnSize(), colType.getColumnSize());
+                assertEquals(18, colType.getPrecision().intValue());
+                assertEquals(6, colType.getScale().intValue());
                 assertEquals(AggregateType.SUM.toSql(), column.getAggregationType());
                 assertFalse(column.getKey());
                 assertTrue(column.getAllowNull());
@@ -306,7 +308,7 @@ public class TableSchemaActionTest extends StarRocksHttpTestCase {
             return GsonUtils.GSON.fromJson(body, new TypeToken<RestBaseResultV2<TableSchemaView>>() {
             }.getType());
         } catch (Exception e) {
-            fail("invalid resp body: " + body);
+            fail("Invalid resp body: " + body);
             throw new IllegalStateException(e);
         }
     }
@@ -321,6 +323,11 @@ public class TableSchemaActionTest extends StarRocksHttpTestCase {
 
     private static String toSchemaUrl(String catalog, String database, String table) {
         return String.format(TABLE_SCHEMA_URL_PATTERN, catalog, database, table);
+    }
+
+    private static <T> T assertColType(ColumnView.TypeView colType, Class<T> clazz) {
+        assertTrue(clazz.isInstance(colType));
+        return (T) colType;
     }
 
 }

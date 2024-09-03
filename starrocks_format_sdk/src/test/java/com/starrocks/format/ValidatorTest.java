@@ -26,9 +26,7 @@ import org.junit.Ignore;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -64,7 +62,7 @@ public class ValidatorTest extends BaseFormatTest {
 
         executeSql(createTableSQL);
         String tableName = "tb_olap_table_only";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         Assertions.assertTrue(Validator.validateSegmentLoadExport(tableSchema));
 
         String createMVSQL = "create materialized view if not exists `demo`.`tb_materialized_view` \n" +
@@ -74,7 +72,7 @@ public class ValidatorTest extends BaseFormatTest {
                 "select rowId, c_tinyint from demo.tb_olap_table_only;";
         executeSql(createMVSQL);
         String mvName = "tb_materialized_view";
-        final TableSchema mvSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, mvName);
+        final TableSchema mvSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, mvName);
         LoadNonSupportException e = Assertions.assertThrows(LoadNonSupportException.class,
                 () -> Validator.validateSegmentLoadExport(mvSchema));
         Assertions.assertEquals("Only olap table support for segment load.", e.getMessage());
@@ -99,14 +97,14 @@ public class ValidatorTest extends BaseFormatTest {
 
         executeSql(createTableSQL);
         String tableName = "tb_normal_state_only";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         Assertions.assertTrue(Validator.validateSegmentLoadExport(tableSchema));
 
         String createMVSQL = "create materialized view `demo`.`tb_rollup_in_state_table` \n" +
                 "AS \n" +
                 "select rowId, c_tinyint from demo.tb_normal_state_only;";
         executeSql(createMVSQL);
-        final TableSchema tableSchema2 = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        final TableSchema tableSchema2 = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         LoadNonSupportException e = Assertions.assertThrows(LoadNonSupportException.class,
                 () -> Validator.validateSegmentLoadExport(tableSchema2));
         Assertions.assertEquals("Table is in ROLLUP state, it did not support for segment load.", e.getMessage());
@@ -128,7 +126,7 @@ public class ValidatorTest extends BaseFormatTest {
                 ");";
         executeSql(createTableSQL);
         String tableName = "tb_large_int_column_type";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         LoadNonSupportException e = Assertions.assertThrows(LoadNonSupportException.class,
                 () -> Validator.validateSegmentLoadExport(tableSchema));
         Assertions.assertEquals("Column type: LargeInt was not support for segment load.", e.getMessage());
@@ -149,7 +147,7 @@ public class ValidatorTest extends BaseFormatTest {
                 ");";
         executeSql(createTableSQL);
         String tableName = "tb_auto_increment_column_type";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         LoadNonSupportException e = Assertions.assertThrows(LoadNonSupportException.class,
                 () -> Validator.validateSegmentLoadExport(tableSchema));
         Assertions.assertEquals("Auto increment column was not support for segment load.", e.getMessage());
@@ -172,7 +170,7 @@ public class ValidatorTest extends BaseFormatTest {
                 ");";
         executeSql(createTableSQL);
         String tableName = "tb_expr_partition_type";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         LoadNonSupportException e = Assertions.assertThrows(LoadNonSupportException.class,
                 () -> Validator.validateSegmentLoadExport(tableSchema));
         Assertions.assertEquals("Expr range partition was not support for segment load.", e.getMessage());
@@ -197,7 +195,7 @@ public class ValidatorTest extends BaseFormatTest {
 
         executeSql(createTableSQL);
         String tableName = "tb_no_rollup_table";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         Assertions.assertTrue(Validator.validateSegmentLoadExport(tableSchema));
 
         String createMVSQL = "create materialized view `demo`.`tb_rollup_in_table` \n" +
@@ -205,7 +203,7 @@ public class ValidatorTest extends BaseFormatTest {
                 "select rowId, c_tinyint from demo.tb_no_rollup_table;";
         executeSql(createMVSQL);
         Assertions.assertTrue(waitCreateRollupFinished(tableName));
-        final TableSchema tableSchema2 = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        final TableSchema tableSchema2 = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         LoadNonSupportException e = Assertions.assertThrows(LoadNonSupportException.class,
                 () -> Validator.validateSegmentLoadExport(tableSchema2));
         Assertions.assertEquals("Rollup was not support for segment load.", e.getMessage());
@@ -264,7 +262,7 @@ public class ValidatorTest extends BaseFormatTest {
                 ");";
         executeSql(createTableSQL);
         String tableName = "tb_colocate_table";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         LoadNonSupportException e = Assertions.assertThrows(LoadNonSupportException.class,
                 () -> Validator.validateSegmentLoadExport(tableSchema));
         Assertions.assertEquals("Colocate group was not support for segment load.", e.getMessage());
@@ -288,7 +286,7 @@ public class ValidatorTest extends BaseFormatTest {
                 ");";
         executeSql(createTableSQL);
         String tableName = "tb_hybrid_column_row_table";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         LoadNonSupportException e = Assertions.assertThrows(LoadNonSupportException.class,
                 () -> Validator.validateSegmentLoadExport(tableSchema));
         Assertions.assertEquals("Hybrid row-column storage was not support for segment load.", e.getMessage());
@@ -311,7 +309,7 @@ public class ValidatorTest extends BaseFormatTest {
                 ");";
         executeSql(createTableSQL);
         String tableName = "tb_unique_constrains_table";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         LoadNonSupportException e = Assertions.assertThrows(LoadNonSupportException.class,
                 () -> Validator.validateSegmentLoadExport(tableSchema));
         Assertions.assertEquals("Unique constraints was not support for segment load.", e.getMessage());
@@ -348,7 +346,7 @@ public class ValidatorTest extends BaseFormatTest {
                 ");";
         executeSql(createTableSQL);
         String tableName = "tb_foreign_key_constrains_table2";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         LoadNonSupportException e = Assertions.assertThrows(LoadNonSupportException.class,
                 () -> Validator.validateSegmentLoadExport(tableSchema));
         Assertions.assertEquals("Foreign key constraints was not support for segment load.", e.getMessage());
@@ -370,7 +368,7 @@ public class ValidatorTest extends BaseFormatTest {
                 ");";
         executeSql(createTableSQL);
         String tableName = "tb_bloom_filter_table";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         LoadNonSupportException e = Assertions.assertThrows(LoadNonSupportException.class,
                 () -> Validator.validateSegmentLoadExport(tableSchema));
         Assertions.assertEquals("Bloom filter columns was not support for segment load.", e.getMessage());
@@ -393,7 +391,7 @@ public class ValidatorTest extends BaseFormatTest {
                 ");";
         executeSql(createTableSQL);
         String tableName = "tb_bitmap_table";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         LoadNonSupportException e = Assertions.assertThrows(LoadNonSupportException.class,
                 () -> Validator.validateSegmentLoadExport(tableSchema));
         Assertions.assertEquals("Bitmap index was not support for segment load.", e.getMessage());

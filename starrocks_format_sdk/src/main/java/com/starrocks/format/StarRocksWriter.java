@@ -14,11 +14,15 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-
 package com.starrocks.format;
 
-import com.starrocks.proto.TabletSchema.ColumnPB;
-import com.starrocks.proto.TabletSchema.TabletSchemaPB;
+import org.apache.arrow.c.ArrowArray;
+import org.apache.arrow.c.ArrowSchema;
+import org.apache.arrow.c.Data;
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.Schema;
 
 import java.util.Map;
 
@@ -27,19 +31,19 @@ public class StarRocksWriter {
     static JniWrapper jniWrapper = JniWrapper.get();
 
     private final Long tabletId;
-    private final TabletSchemaPB schema;
+    private final Schema schema;
     private final Long txnId;
     private final String tabletRootPath;
     private final Map<String, String> options;
 
     // nativeWriter is the c++ StarRocksFormatWriter potiner
     private long nativeWriter = 0;
-
+    BufferAllocator rootAllocator;
     private volatile boolean released = false;
 
     public StarRocksWriter(long tabletId,
-                           TabletSchemaPB schema,
                            long txnId,
+                           Schema schema,
                            String tabletRootPath,
                            Map<String, String> options) {
         checkSchema(schema);
@@ -48,12 +52,21 @@ public class StarRocksWriter {
         this.txnId = txnId;
         this.tabletRootPath = tabletRootPath;
         this.options = options;
+
+        rootAllocator = new RootAllocator();
+
+        ArrowSchema arrowSchema = ArrowSchema.allocateNew(rootAllocator);
+        Data.exportSchema(rootAllocator, this.schema, null, arrowSchema);
         this.nativeWriter = createNativeWriter(
                 tabletId,
-                schema.toByteArray(),
                 txnId,
+                arrowSchema.memoryAddress(),
                 tabletRootPath,
                 options);
+    }
+
+    public BufferAllocator getRootAllocator() {
+        return rootAllocator;
     }
 
     public void open() {
@@ -66,9 +79,12 @@ public class StarRocksWriter {
         nativeClose(nativeWriter);
     }
 
-    public long write(Chunk chunk) {
+    public long write(VectorSchemaRoot vsr) {
         checkState();
-        return nativeWrite(nativeWriter, chunk.getNativeHandler());
+        try (ArrowArray arrowArray = ArrowArray.allocateNew(rootAllocator)) {
+            Data.exportVectorSchemaRoot(rootAllocator, vsr, null, arrowArray);
+            return nativeWrite(nativeWriter, arrowArray.memoryAddress());
+        }
     }
 
     public long flush() {
@@ -82,27 +98,15 @@ public class StarRocksWriter {
         return nativeFinish(nativeWriter);
     }
 
-    public Chunk newChunk(int capacity) {
-        checkState();
-        long chunkHandler = createNativeChunk(nativeWriter, capacity);
-        return new Chunk(chunkHandler, schema);
-    }
-
     public void release() {
         JniWrapper.get().releaseWriter(nativeWriter);
         nativeWriter = 0;
         released = true;
     }
 
-    private static void checkSchema(TabletSchemaPB schema) {
-        if (schema == null || schema.getColumnCount() == 0) {
-            throw new IllegalArgumentException("Schema should not be empty.");
-        }
-
-        for (ColumnPB column : schema.getColumnList()) {
-            if (DataType.isUnsupported(column.getType())) {
-                throw new UnsupportedOperationException("Unsupported column type: " + column.getType());
-            }
+    private static void checkSchema(Schema schema) {
+        if (schema == null || schema.getFields().isEmpty()) {
+            throw new RuntimeException("Schema should not be empty!");
         }
     }
 
@@ -119,14 +123,14 @@ public class StarRocksWriter {
     /* native methods */
 
     public native long createNativeWriter(long tabletId,
-                                          byte[] schemaPb,
                                           long txnId,
+                                          long schema,
                                           String tableRootPath,
                                           Map<String, String> options);
 
     public native long nativeOpen(long nativeWriter);
 
-    public native long nativeWrite(long nativeWriter, long chunkAddr);
+    public native long nativeWrite(long nativeWriter, long arrowArray);
 
     public native long nativeFlush(long nativeWriter);
 
@@ -134,5 +138,4 @@ public class StarRocksWriter {
 
     public native long nativeClose(long nativeWriter);
 
-    public native long createNativeChunk(long nativeWriter, int capacity);
 }

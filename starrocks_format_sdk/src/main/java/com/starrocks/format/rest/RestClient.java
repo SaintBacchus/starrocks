@@ -214,6 +214,7 @@ public class RestClient implements AutoCloseable {
 
     /**
      * Request to get tablet meta.
+     * metaUrl: http://10.37.55.121:8040/api/meta/header/15143
      */
     public String getTabletMeta(String metaUrl) throws RequestException {
         LOG.info("Get tablet meta from {}", metaUrl);
@@ -509,23 +510,28 @@ public class RestClient implements AutoCloseable {
                         return responseEntityParser.apply(httpEntity);
                     }
 
-                    String message = null;
+                    String message = response.getStatusLine().toString();
                     if (null != httpEntity) {
-                        message = EntityUtils.toString(httpEntity, StandardCharsets.UTF_8);
+                        message = message + ", " + EntityUtils.toString(httpEntity, StandardCharsets.UTF_8);
                     }
-                    LOG.warn("Request {} with retries {} error, reason: {}", request, retryCnt, message);
+                    e = new RequestException(request, message);
+                    LOG.debug("Request {} with retries {} error, reason: {}", request, retryCnt, message);
                 }
             } catch (Throwable ex) {
                 e = ex;
-                LOG.warn("Request {} with retries {} error, reason: {}", request, retryCnt, e.getMessage());
             }
         }
 
+        LOG.error("Request {} error", request, e);
         if (e instanceof RequestException) {
             throw (RequestException) e;
         }
 
-        throw new RequestException(request, Optional.ofNullable(e).map(Throwable::getMessage).orElse(null), e);
+        throw new RequestException(
+                request,
+                Optional.ofNullable(e).map(Throwable::getMessage).orElse(null),
+                e
+        );
     }
 
     /**

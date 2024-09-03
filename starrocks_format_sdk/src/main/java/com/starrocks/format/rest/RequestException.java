@@ -19,7 +19,11 @@ package com.starrocks.format.rest;
 
 import org.apache.http.client.methods.HttpRequestBase;
 
+import java.util.Optional;
+
 public class RequestException extends Exception {
+
+    private static final long serialVersionUID = 3313208780769850911L;
 
     public RequestException(HttpRequestBase request, String message) {
         super(wrapMessage(request, message));
@@ -30,7 +34,8 @@ public class RequestException extends Exception {
     }
 
     private static String wrapMessage(HttpRequestBase request, String message) {
-        return String.format("%s error, reason: %s", request.toString(), message);
+        String wrapMsg = request.toString() + " error";
+        return Optional.ofNullable(message).map(wm -> wrapMsg + ": " + wm).orElse(wrapMsg);
     }
 
 }

@@ -17,34 +17,54 @@
 
 package com.starrocks.format;
 
+import com.google.gson.Gson;
 import com.starrocks.format.rest.LoadNonSupportException;
 import com.starrocks.format.rest.RequestException;
 import com.starrocks.format.rest.Validator;
 import com.starrocks.format.rest.model.TablePartition;
 import com.starrocks.format.rest.model.TableSchema;
-import com.starrocks.proto.TabletSchema;
-import com.starrocks.proto.Types;
+import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DateMilliVector;
+import org.apache.arrow.vector.Decimal256Vector;
+import org.apache.arrow.vector.DecimalVector;
+import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float4Vector;
+import org.apache.arrow.vector.Float8Vector;
+import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.SmallIntVector;
+import org.apache.arrow.vector.TimeStampVector;
+import org.apache.arrow.vector.TinyIntVector;
+import org.apache.arrow.vector.VarBinaryVector;
+import org.apache.arrow.vector.VarCharVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.complex.ListVector;
+import org.apache.arrow.vector.complex.MapVector;
+import org.apache.arrow.vector.complex.StructVector;
+import org.apache.arrow.vector.complex.impl.UnionMapWriter;
+import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.arrow.vector.types.pojo.Schema;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.io.File;
 import java.math.BigDecimal;
-import java.math.BigInteger;
 import java.math.RoundingMode;
-import java.nio.file.Path;
+import java.nio.ByteBuffer;
 import java.sql.Date;
-import java.sql.Timestamp;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -141,17 +161,16 @@ public class SegmentExportTest extends BaseFormatTest {
         for (int i = 0; i < times; i++) {
             String uuid = RandomStringUtils.randomAlphabetic(8);
             String stageDir = "s3a://bucket1/.staging_ut/" + uuid + "/";
-            TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+            TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
             Validator.validateSegmentLoadExport(tableSchema);
-            TabletSchema.TabletSchemaPB tabletSchema = toPbTabletSchema(tableSchema);
+            Schema tabletSchema = StarRocksUtils.toArrowSchema(tableSchema);
 
-            List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME,
+            List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName,
                     tableName, false);
             long tableId = tableSchema.getId();
             long indexId = tableSchema.getIndexMetas().get(0).getIndexId();
 
             assertFalse(partitions.isEmpty());
-            String fastSchemaChange = tableSchema.isFastSchemaChange();
             for (TablePartition partition : partitions) {
                 List<TablePartition.Tablet> tablets = partition.getTablets();
                 assertFalse(tablets.isEmpty());
@@ -162,31 +181,25 @@ public class SegmentExportTest extends BaseFormatTest {
                         String storagePath = stageDir + "/" + tableId + "/" + partition.getId() + "/"
                                 + indexId + "/" + tabletId;
                         Map<String, String> options = settings.toMap();
-                        if (fastSchemaChange.equalsIgnoreCase("false")) {
-                            // http://10.37.55.121:8040/api/meta/header/15143
-                            String metaUrl = tablet.getMetaUrls().get(0);
-                            String metaContext = restClient.getTabletMeta(metaUrl);
-                            options.put("starrocks.format.metaContext", metaContext);
-                            options.put("starrocks.format.fastSchemaChange", fastSchemaChange);
-                        }
+                        String metaUrl = tablet.getMetaUrls().get(0);
+                        String metaContext = restClient.getTabletMeta(metaUrl);
+                        options.put("starrocks.format.metaContext", metaContext);
                         StarRocksWriter writer = new StarRocksWriter(tabletId,
-                                tabletSchema,
                                 -1L,
+                                tabletSchema,
                                 storagePath,
                                 options);
                         writer.open();
-                        // write use chunk interface
-                        Chunk chunk = writer.newChunk(4096);
+                        // write use arrow interface
+                        try (VectorSchemaRoot vsr = VectorSchemaRoot.create(tabletSchema, writer.getRootAllocator())) {
+                            fillSampleData(vsr, 0, 200);
+                            writer.write(vsr);
+                            vsr.clear();
 
-                        chunk.reset();
-                        fillSampleData(tabletSchema, chunk, 0, 200);
-                        writer.write(chunk);
-
-                        chunk.reset();
-                        fillSampleData(tabletSchema, chunk, 200, 200);
-                        writer.write(chunk);
-
-                        chunk.release();
+                            fillSampleData(vsr, 200, 200);
+                            writer.write(vsr);
+                            vsr.clear();
+                        }
                         writer.flush();
                         writer.finish();
                         writer.close();
@@ -198,17 +211,17 @@ public class SegmentExportTest extends BaseFormatTest {
                 }
             }
 
-            String label = String.format("bypass_write_%s_%s_%s", DB_NAME, tableName, uuid);
+            String label = String.format("bypass_write_%s_%s_%s", dbName, tableName, uuid);
             String ak = settings.getS3AccessKey();
             String sk = settings.getS3SecretKey();
             String endpoint = settings.getS3Endpoint();
 
-            loadSegmentData(DB_NAME, label, stageDir, tableName, ak, sk, endpoint);
-            boolean res = waitUtilLoadFinished(DB_NAME, label);
+            loadSegmentData(dbName, label, stageDir, tableName, ak, sk, endpoint);
+            boolean res = waitUtilLoadFinished(dbName, label);
             assertTrue(res);
         }
 
-        List<Map<String, String>> outputs = getTableRowNum(DB_NAME, tableName);
+        List<Map<String, String>> outputs = getTableRowNum(dbName, tableName);
         assertEquals(1, outputs.size());
         switch (tableName) {
             case "tb_all_primitivetype_write_duplicate2":
@@ -227,7 +240,7 @@ public class SegmentExportTest extends BaseFormatTest {
                 fail();
         }
 
-        List<Map<String, String>> outputsNotNull = getTableRowNumNotNUll(DB_NAME, tableName);
+        List<Map<String, String>> outputsNotNull = getTableRowNumNotNUll(dbName, tableName);
         assertEquals(1, outputsNotNull.size());
         switch (tableName) {
             case "tb_all_primitivetype_write_duplicate2":
@@ -258,7 +271,11 @@ public class SegmentExportTest extends BaseFormatTest {
                 " DEFAULT \"0\" AFTER c_datetime", tableName);
         executeSql(addColumnTable);
         Assertions.assertTrue(waitAlterTableColumnFinished(tableName));
-        testTableTypes(tableName);
+        if (tableName.equalsIgnoreCase("tb_fast_schema_change_table")) {
+            testTableTypes(tableName, false);
+        } else {
+            testTableTypes(tableName);
+        }
     }
 
     @Test
@@ -267,16 +284,15 @@ public class SegmentExportTest extends BaseFormatTest {
 
         String uuid = RandomStringUtils.randomAlphabetic(8);
         String stageDir = "s3a://bucket1/.staging_ut/" + uuid + "/";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         Validator.validateSegmentLoadExport(tableSchema);
-        TabletSchema.TabletSchemaPB tabletSchema = toPbTabletSchema(tableSchema);
+        Schema tabletSchema = StarRocksUtils.toArrowSchema(tableSchema);
 
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         long tableId = tableSchema.getId();
         long indexId = tableSchema.getIndexMetas().get(0).getIndexId();
 
         assertFalse(partitions.isEmpty());
-        String fastSchemaChange = tableSchema.isFastSchemaChange();
 
         for (TablePartition partition : partitions) {
             List<TablePartition.Tablet> tablets = partition.getTablets();
@@ -288,31 +304,25 @@ public class SegmentExportTest extends BaseFormatTest {
                     String storagePath = stageDir + "/" + tableId + "/" + partition.getId() + "/"
                             + indexId + "/" + tabletId;
                     Map<String, String> options = settings.toMap();
-                    if (fastSchemaChange.equalsIgnoreCase("false")) {
-                        // http://10.37.55.121:8040/api/meta/header/15143
-                        String metaUrl = tablet.getMetaUrls().get(0);
-                        String metaContext = restClient.getTabletMeta(metaUrl);
-                        options.put("starrocks.format.metaContext", metaContext);
-                        options.put("starrocks.format.fastSchemaChange", fastSchemaChange);
-                    }
+                    String metaUrl = tablet.getMetaUrls().get(0);
+                    String metaContext = restClient.getTabletMeta(metaUrl);
+                    options.put("starrocks.format.metaContext", metaContext);
                     StarRocksWriter writer = new StarRocksWriter(tabletId,
-                            tabletSchema,
                             -1L,
+                            tabletSchema,
                             storagePath,
                             options);
                     writer.open();
-                    // write use chunk interface
-                    Chunk chunk = writer.newChunk(4096);
+                    // write use arrow interface
+                    try (VectorSchemaRoot vsr = VectorSchemaRoot.create(tabletSchema, writer.getRootAllocator())) {
+                        fillSampleData(vsr, 0, 200);
+                        writer.write(vsr);
+                        vsr.clear();
 
-                    chunk.reset();
-                    fillSampleData(tabletSchema, chunk, 0, 200);
-                    writer.write(chunk);
-
-                    chunk.reset();
-                    fillSampleData(tabletSchema, chunk, 200, 200);
-                    writer.write(chunk);
-
-                    chunk.release();
+                        fillSampleData(vsr, 200, 200);
+                        writer.write(vsr);
+                        vsr.clear();
+                    }
                     writer.flush();
                     writer.finish();
                     writer.close();
@@ -328,13 +338,13 @@ public class SegmentExportTest extends BaseFormatTest {
         executeSql(renameSql);
         Thread.sleep(1000);
 
-        String label = String.format("bypass_write_%s_%s_%s", DB_NAME, tableName, uuid);
+        String label = String.format("bypass_write_%s_%s_%s", dbName, tableName, uuid);
         String ak = settings.getS3AccessKey();
         String sk = settings.getS3SecretKey();
         String endpoint = settings.getS3Endpoint();
 
         IllegalStateException illegalStateException = Assertions.assertThrows(IllegalStateException.class,
-                ()->loadSegmentData(DB_NAME, label, stageDir, tableName, ak, sk, endpoint));
+                ()->loadSegmentData(dbName, label, stageDir, tableName, ak, sk, endpoint));
         Assertions.assertEquals("submit sql error, Getting analyzing error." +
                 " Detail message: Table demo.tb_all_primitivetype_rename_table is not found.",
                 illegalStateException.getMessage());
@@ -346,16 +356,15 @@ public class SegmentExportTest extends BaseFormatTest {
 
         String uuid = RandomStringUtils.randomAlphabetic(8);
         String stageDir = "s3a://bucket1/.staging_ut/" + uuid + "/";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         Validator.validateSegmentLoadExport(tableSchema);
-        TabletSchema.TabletSchemaPB tabletSchema = toPbTabletSchema(tableSchema);
+        Schema tabletSchema = StarRocksUtils.toArrowSchema(tableSchema);
 
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         long tableId = tableSchema.getId();
         long indexId = tableSchema.getIndexMetas().get(0).getIndexId();
 
         assertFalse(partitions.isEmpty());
-        String fastSchemaChange = tableSchema.isFastSchemaChange();
 
         for (TablePartition partition : partitions) {
             List<TablePartition.Tablet> tablets = partition.getTablets();
@@ -367,31 +376,25 @@ public class SegmentExportTest extends BaseFormatTest {
                     String storagePath = stageDir + "/" + tableId + "/" + partition.getId() + "/"
                             + indexId + "/" + tabletId;
                     Map<String, String> options = settings.toMap();
-                    if (fastSchemaChange.equalsIgnoreCase("false")) {
-                        // http://10.37.55.121:8040/api/meta/header/15143
-                        String metaUrl = tablet.getMetaUrls().get(0);
-                        String metaContext = restClient.getTabletMeta(metaUrl);
-                        options.put("starrocks.format.metaContext", metaContext);
-                        options.put("starrocks.format.fastSchemaChange", fastSchemaChange);
-                    }
+                    String metaUrl = tablet.getMetaUrls().get(0);
+                    String metaContext = restClient.getTabletMeta(metaUrl);
+                    options.put("starrocks.format.metaContext", metaContext);
                     StarRocksWriter writer = new StarRocksWriter(tabletId,
-                            tabletSchema,
                             -1L,
+                            tabletSchema,
                             storagePath,
                             options);
                     writer.open();
-                    // write use chunk interface
-                    Chunk chunk = writer.newChunk(4096);
+                    // write use arrow interface
+                    try (VectorSchemaRoot vsr = VectorSchemaRoot.create(tabletSchema, writer.getRootAllocator())) {
+                        fillSampleData(vsr, 0, 200);
+                        writer.write(vsr);
+                        vsr.clear();
 
-                    chunk.reset();
-                    fillSampleData(tabletSchema, chunk, 0, 200);
-                    writer.write(chunk);
-
-                    chunk.reset();
-                    fillSampleData(tabletSchema, chunk, 200, 200);
-                    writer.write(chunk);
-
-                    chunk.release();
+                        fillSampleData(vsr, 200, 200);
+                        writer.write(vsr);
+                        vsr.clear();
+                    }
                     writer.flush();
                     writer.finish();
                     writer.close();
@@ -407,20 +410,20 @@ public class SegmentExportTest extends BaseFormatTest {
         executeSql(modifyComment);
         Thread.sleep(1000);
 
-        String label = String.format("bypass_write_%s_%s_%s", DB_NAME, tableName, uuid);
+        String label = String.format("bypass_write_%s_%s_%s", dbName, tableName, uuid);
         String ak = settings.getS3AccessKey();
         String sk = settings.getS3SecretKey();
         String endpoint = settings.getS3Endpoint();
 
-        loadSegmentData(DB_NAME, label, stageDir, tableName, ak, sk, endpoint);
-        boolean res = waitUtilLoadFinished(DB_NAME, label);
+        loadSegmentData(dbName, label, stageDir, tableName, ak, sk, endpoint);
+        boolean res = waitUtilLoadFinished(dbName, label);
         assertTrue(res);
 
-        List<Map<String, String>> outputs = getTableRowNum(DB_NAME, tableName);
+        List<Map<String, String>> outputs = getTableRowNum(dbName, tableName);
         assertEquals(1, outputs.size());
         assertEquals(400, Integer.valueOf(outputs.get(0).get("num")));
 
-        List<Map<String, String>> outputsNotNull = getTableRowNumNotNUll(DB_NAME, tableName);
+        List<Map<String, String>> outputsNotNull = getTableRowNumNotNUll(dbName, tableName);
         assertEquals(1, outputsNotNull.size());
         assertEquals(399, Integer.valueOf(outputsNotNull.get(0).get("num")));
     }
@@ -432,16 +435,15 @@ public class SegmentExportTest extends BaseFormatTest {
 
         String uuid = RandomStringUtils.randomAlphabetic(8);
         String stageDir = "s3a://bucket1/.staging_ut/" + uuid + "/";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         Validator.validateSegmentLoadExport(tableSchema);
-        TabletSchema.TabletSchemaPB tabletSchema = toPbTabletSchema(tableSchema);
+        Schema tabletSchema = StarRocksUtils.toArrowSchema(tableSchema);
 
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         long tableId = tableSchema.getId();
         long indexId = tableSchema.getIndexMetas().get(0).getIndexId();
 
         assertFalse(partitions.isEmpty());
-        String fastSchemaChange = tableSchema.isFastSchemaChange();
 
         for (TablePartition partition : partitions) {
             List<TablePartition.Tablet> tablets = partition.getTablets();
@@ -453,31 +455,25 @@ public class SegmentExportTest extends BaseFormatTest {
                     String storagePath = stageDir + "/" + tableId + "/" + partition.getId() + "/"
                             + indexId + "/" + tabletId;
                     Map<String, String> options = settings.toMap();
-                    if (fastSchemaChange.equalsIgnoreCase("false")) {
-                        // http://10.37.55.121:8040/api/meta/header/15143
-                        String metaUrl = tablet.getMetaUrls().get(0);
-                        String metaContext = restClient.getTabletMeta(metaUrl);
-                        options.put("starrocks.format.metaContext", metaContext);
-                        options.put("starrocks.format.fastSchemaChange", fastSchemaChange);
-                    }
+                    String metaUrl = tablet.getMetaUrls().get(0);
+                    String metaContext = restClient.getTabletMeta(metaUrl);
+                    options.put("starrocks.format.metaContext", metaContext);
                     StarRocksWriter writer = new StarRocksWriter(tabletId,
-                            tabletSchema,
                             -1L,
+                            tabletSchema,
                             storagePath,
                             options);
                     writer.open();
-                    // write use chunk interface
-                    Chunk chunk = writer.newChunk(4096);
+                    // write use arrow interface
+                    try (VectorSchemaRoot vsr = VectorSchemaRoot.create(tabletSchema, writer.getRootAllocator())) {
+                        fillSampleData(vsr, 0, 200);
+                        writer.write(vsr);
+                        vsr.clear();
 
-                    chunk.reset();
-                    fillSampleData(tabletSchema, chunk, 0, 200);
-                    writer.write(chunk);
-
-                    chunk.reset();
-                    fillSampleData(tabletSchema, chunk, 200, 200);
-                    writer.write(chunk);
-
-                    chunk.release();
+                        fillSampleData(vsr, 200, 200);
+                        writer.write(vsr);
+                        vsr.clear();
+                    }
                     writer.flush();
                     writer.finish();
                     writer.close();
@@ -493,13 +489,13 @@ public class SegmentExportTest extends BaseFormatTest {
         executeSql(renameSql);
         Thread.sleep(1000);
 
-        String label = String.format("bypass_write_%s_%s_%s", DB_NAME, tableName, uuid);
+        String label = String.format("bypass_write_%s_%s_%s", dbName, tableName, uuid);
         String ak = settings.getS3AccessKey();
         String sk = settings.getS3SecretKey();
         String endpoint = settings.getS3Endpoint();
 
-        loadSegmentData(DB_NAME, label, stageDir, tableName, ak, sk, endpoint);
-        boolean res = waitUtilLoadFinished(DB_NAME, label);
+        loadSegmentData(dbName, label, stageDir, tableName, ak, sk, endpoint);
+        boolean res = waitUtilLoadFinished(dbName, label);
         assertFalse(res);
     }
 
@@ -520,20 +516,22 @@ public class SegmentExportTest extends BaseFormatTest {
     public void testStorageTypeTable(String tableName) throws Exception {
         testTableTypes(tableName);
     }
-
     private void testTableTypes(String tableName) throws LoadNonSupportException, RequestException {
+        testTableTypes(tableName, true);
+    }
+
+    private void testTableTypes(String tableName, boolean assertOK) throws LoadNonSupportException, RequestException {
         String uuid = RandomStringUtils.randomAlphabetic(8);
         String stageDir = "s3a://bucket1/.staging_ut/" + uuid + "/";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         Validator.validateSegmentLoadExport(tableSchema);
-        TabletSchema.TabletSchemaPB tabletSchema = toPbTabletSchema(tableSchema);
+        Schema tabletSchema = StarRocksUtils.toArrowSchema(tableSchema);
 
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         long tableId = tableSchema.getId();
         long indexId = tableSchema.getIndexMetas().get(0).getIndexId();
 
         assertFalse(partitions.isEmpty());
-        String fastSchemaChange = tableSchema.isFastSchemaChange();
 
         for (TablePartition partition : partitions) {
             List<TablePartition.Tablet> tablets = partition.getTablets();
@@ -545,305 +543,56 @@ public class SegmentExportTest extends BaseFormatTest {
                     String storagePath = stageDir + "/" + tableId + "/" + partition.getId() + "/"
                             + indexId + "/" + tabletId;
                     Map<String, String> options = settings.toMap();
-                    if (fastSchemaChange.equalsIgnoreCase("false")) {
-                        // http://10.37.55.121:8040/api/meta/header/15143
-                        String metaUrl = tablet.getMetaUrls().get(0);
-                        String metaContext = restClient.getTabletMeta(metaUrl);
-                        options.put("starrocks.format.metaContext", metaContext);
-                        options.put("starrocks.format.fastSchemaChange", fastSchemaChange);
-                    }
+                    String metaUrl = tablet.getMetaUrls().get(0);
+                    String metaContext = restClient.getTabletMeta(metaUrl);
+                    options.put("starrocks.format.metaContext", metaContext);
                     StarRocksWriter writer = new StarRocksWriter(tabletId,
-                            tabletSchema,
                             -1L,
+                            tabletSchema,
                             storagePath,
                             options);
                     writer.open();
-                    // write use chunk interface
-                    Chunk chunk = writer.newChunk(4096);
+                    // write use arrow interface
+                    try (VectorSchemaRoot vsr = VectorSchemaRoot.create(tabletSchema, writer.getRootAllocator())) {
+                        fillSampleData(vsr, 0, 200);
+                        writer.write(vsr);
+                        vsr.clear();
 
-                    chunk.reset();
-                    fillSampleData(tabletSchema, chunk, 0, 200);
-                    writer.write(chunk);
-
-                    chunk.reset();
-                    fillSampleData(tabletSchema, chunk, 200, 200);
-                    writer.write(chunk);
-
-                    chunk.release();
+                        fillSampleData(vsr, 200, 200);
+                        writer.write(vsr);
+                        vsr.clear();
+                    }
                     writer.flush();
                     writer.finish();
                     writer.close();
                     writer.release();
                 } catch (Exception e) {
                     e.printStackTrace();
-                    fail();
+                    if (assertOK) {
+                        fail();
+                    } else {
+                        return;
+                    }
                 }
             }
         }
 
-        String label = String.format("bypass_write_%s_%s_%s", DB_NAME, tableName, uuid);
+        String label = String.format("bypass_write_%s_%s_%s", dbName, tableName, uuid);
         String ak = settings.getS3AccessKey();
         String sk = settings.getS3SecretKey();
         String endpoint = settings.getS3Endpoint();
 
-        loadSegmentData(DB_NAME, label, stageDir, tableName, ak, sk, endpoint);
-        boolean res = waitUtilLoadFinished(DB_NAME, label);
+        loadSegmentData(dbName, label, stageDir, tableName, ak, sk, endpoint);
+        boolean res = waitUtilLoadFinished(dbName, label);
         assertTrue(res);
 
-        List<Map<String, String>> outputs = getTableRowNum(DB_NAME, tableName);
+        List<Map<String, String>> outputs = getTableRowNum(dbName, tableName);
         assertEquals(1, outputs.size());
         assertEquals(400, Integer.valueOf(outputs.get(0).get("num")));
 
-        List<Map<String, String>> outputsNotNull = getTableRowNumNotNUll(DB_NAME, tableName);
+        List<Map<String, String>> outputsNotNull = getTableRowNumNotNUll(dbName, tableName);
         assertEquals(1, outputsNotNull.size());
         assertEquals(399, Integer.valueOf(outputsNotNull.get(0).get("num")));
-    }
-
-    @Test
-    public void testWriteLocalUseChunkForBulkLoad(@TempDir Path tempDir) throws Exception {
-        TabletSchema.TabletSchemaPB.Builder schemaBuilder = TabletSchema.TabletSchemaPB.newBuilder()
-                .setId(1)
-                .setKeysType(TabletSchema.KeysType.DUP_KEYS)
-                .setCompressionType(Types.CompressionTypePB.LZ4_FRAME);
-
-        BaseFormatTest.ColumnType[] columnTypes = new BaseFormatTest.ColumnType[] {
-                new BaseFormatTest.ColumnType(DataType.INT, 4),
-                new BaseFormatTest.ColumnType(DataType.BOOLEAN, 4),
-                new BaseFormatTest.ColumnType(DataType.TINYINT, 1),
-                new BaseFormatTest.ColumnType(DataType.SMALLINT, 2),
-                new BaseFormatTest.ColumnType(DataType.BIGINT, 8),
-                new BaseFormatTest.ColumnType(DataType.LARGEINT, 16),
-                new BaseFormatTest.ColumnType(DataType.FLOAT, 4),
-                new BaseFormatTest.ColumnType(DataType.DOUBLE, 8),
-                new BaseFormatTest.ColumnType(DataType.DATE, 4),
-                new BaseFormatTest.ColumnType(DataType.DATETIME, 8),
-                new BaseFormatTest.ColumnType(DataType.DECIMAL32, 8),
-                new BaseFormatTest.ColumnType(DataType.DECIMAL64, 16),
-                new BaseFormatTest.ColumnType(DataType.VARCHAR, 32 + Integer.SIZE)};
-
-        int colId = 0;
-        for (BaseFormatTest.ColumnType columnType : columnTypes) {
-            TabletSchema.ColumnPB.Builder columnBuilder = TabletSchema.ColumnPB.newBuilder()
-                    .setName("c_" + columnType.getDataType())
-                    .setUniqueId(colId)
-                    .setIsKey(true)
-                    .setIsNullable(true)
-                    .setType(columnType.getDataType().getLiteral())
-                    .setLength(columnType.getLength())
-                    .setIndexLength(columnType.getLength())
-                    .setAggregation("none");
-            if (columnType.getDataType().getLiteral().startsWith("DECIMAL32")) {
-                columnBuilder.setPrecision(9);
-                columnBuilder.setFrac(2);
-            } else if (columnType.getDataType().getLiteral().startsWith("DECIMAL64")) {
-                columnBuilder.setPrecision(18);
-                columnBuilder.setFrac(3);
-            } else if (columnType.getDataType().getLiteral().startsWith("DECIMAL128")) {
-                columnBuilder.setPrecision(38);
-                columnBuilder.setFrac(4);
-            }
-            schemaBuilder.addColumn(columnBuilder.build());
-            colId++;
-        }
-        TabletSchema.TabletSchemaPB schema = schemaBuilder
-                .setNextColumnUniqueId(colId)
-                // sort key index alway the key column index
-                .addSortKeyIdxes(0)
-                // short key size is less than sort keys
-                .setNumShortKeyColumns(1)
-                .setNumRowsPerRowBlock(1024)
-                .build();
-
-        long tabletId = 100L;
-        long txnId = 4;
-
-        String tabletRootPath = tempDir.toAbsolutePath().toString();
-        File dir = new File(tabletRootPath + "/data");
-        assertTrue(dir.mkdirs());
-
-        Map<String,String> config = new HashMap<>();
-        config.put("starrocks.format.mode", "share_nothing");
-        StarRocksWriter writer = new StarRocksWriter(tabletId,
-                schema,
-                txnId,
-                tabletRootPath,
-                config);
-        writer.open();
-
-        // write use chunk interface
-        Chunk chunk = writer.newChunk(5);
-        fillSampleData(schema, chunk, 0, 5);
-        writer.write(chunk);
-
-        chunk.release();
-        writer.flush();
-        writer.finish();
-        writer.close();
-        writer.release();
-        File tabletSchemaFile= new File(tabletRootPath + "/tablet.schema");
-        assertTrue(tabletSchemaFile.exists());
-        assertEquals(2, Objects.requireNonNull(dir.listFiles()).length);
-        for (File f: Objects.requireNonNull(dir.listFiles())) {
-            assertTrue(f.toString().endsWith(".dat") || f.toString().endsWith(".pb"));
-        }
-    }
-
-    // when rowId is 0, fill the max value,
-    // 1 fill the min value,
-    // 2 fill null,
-    // >=4 fill the base value * rowId * sign.
-    private static void fillSampleData(TabletSchema.TabletSchemaPB pbSchema, Chunk chunk, int startRowId, int numRows) {
-
-        for (int colIdx = 0; colIdx < pbSchema.getColumnCount(); colIdx++) {
-            TabletSchema.ColumnPB pbColumn = pbSchema.getColumn(colIdx);
-            Column column = chunk.getColumn(colIdx);
-            for (int rowIdx = 0; rowIdx < numRows; rowIdx++) {
-                int rowId = startRowId + rowIdx;
-                if ("rowid".equalsIgnoreCase(pbColumn.getName())) {
-                    column.appendInt(rowId);
-                    continue;
-                }
-                if (rowId == 2) {
-                    column.appendNull();
-                    continue;
-                }
-                int sign = (rowId % 2 == 0) ? -1 : 1;
-
-                DataType dataType = DataType.fromLiteral(pbColumn.getType()).get();
-                switch (dataType) {
-                    case BOOLEAN:
-                        column.appendBool(rowId % 2 == 0);
-                        break;
-                    case TINYINT:
-                        if (rowId == 0) {
-                            column.appendByte(Byte.MAX_VALUE);
-                        } else if (rowId == 1) {
-                            column.appendByte(Byte.MIN_VALUE);
-                        } else {
-                            column.appendByte((byte) (rowId * sign));
-                        }
-                        break;
-                    case SMALLINT:
-                        if (rowId == 0) {
-                            column.appendShort(Short.MAX_VALUE);
-                        } else if (rowId == 1) {
-                            column.appendShort(Short.MIN_VALUE);
-                        } else {
-                            column.appendShort((short) (rowId * 10 * sign));
-                        }
-                        break;
-                    case INT:
-                        if (rowId == 0) {
-                            column.appendInt(Integer.MAX_VALUE);
-                        } else if (rowId == 1) {
-                            column.appendInt(Integer.MIN_VALUE);
-                        } else {
-                            column.appendInt(rowId * 100 * sign);
-                        }
-                        break;
-                    case BIGINT:
-                        if (rowId == 0) {
-                            column.appendLong(Long.MAX_VALUE);
-                        } else if (rowId == 1) {
-                            column.appendLong(Long.MIN_VALUE);
-                        } else {
-                            column.appendLong(rowId * 1000L * sign);
-                        }
-                        break;
-                    case LARGEINT:
-                        if (rowId == 0) {
-                            column.appendLargeInt(new BigInteger("6693349846790746512344567890123456789"));
-                        } else if (rowId == 1) {
-                            column.appendLargeInt(new BigInteger("-6693349846790746512344567890123456789"));
-                        } else {
-                            column.appendLargeInt(BigInteger.valueOf(rowId * 10000L * sign));
-                        }
-                        break;
-                    case FLOAT:
-                        column.appendFloat(123.45678901234f * rowId * sign);
-                        break;
-                    case DOUBLE:
-                        column.appendDouble(23456.78901234 * rowId * sign);
-                        break;
-                    case DECIMAL:
-                        // decimal v2 type
-                        BigDecimal bdv2;
-                        if (rowId == 0) {
-                            bdv2 = new BigDecimal("-12345678901234567890123.4567");
-                        } else if (rowId == 1) {
-                            bdv2 = new BigDecimal("999999999999999999999999.9999");
-                        } else {
-                            bdv2 = new BigDecimal("1234.56789");
-                            bdv2 = bdv2.multiply(BigDecimal.valueOf(sign));
-                        }
-                        column.appendDecimal(bdv2);
-                        break;
-                    case DECIMAL32:
-                    case DECIMAL64:
-                    case DECIMAL128:
-                        BigDecimal bd;
-                        if (rowId == 0) {
-                            if (pbColumn.getPrecision() <= 9) {
-                                bd = new BigDecimal("9999999.5678");
-                            } else if (pbColumn.getPrecision() <= 18) {
-                                bd = new BigDecimal("999999999999999.56789");
-                            } else {
-                                bd = new BigDecimal("9999999999999999999999999999999999.56789");
-                            }
-                        } else if (rowId == 1) {
-                            if (pbColumn.getPrecision() <= 9) {
-                                bd = new BigDecimal("-9999999.5678");
-                            } else if (pbColumn.getPrecision() <= 18) {
-                                bd = new BigDecimal("-999999999999999.56789");
-                            } else {
-                                bd = new BigDecimal("-9999999999999999999999999999999999.56789");
-                            }
-                        } else {
-                            if (pbColumn.getPrecision() <= 9) {
-                                bd = new BigDecimal("12345.5678");
-                            } else if (pbColumn.getPrecision() <= 18) {
-                                bd = new BigDecimal("123456789012.56789");
-                            } else {
-                                bd = new BigDecimal("12345678901234567890123.56789");
-                            }
-                            bd = bd.multiply(BigDecimal.valueOf((long) rowId * sign))
-                                    .setScale(pbColumn.getFrac(), RoundingMode.HALF_UP);
-                        }
-                        column.appendDecimal(bd);
-                        break;
-                    case CHAR:
-                    case VARCHAR:
-                        column.appendString(pbColumn.getName() + ":name" + rowId);
-                        break;
-                    case DATE:
-                        Date dt;
-                        if (rowId == 0) {
-                            dt = Date.valueOf("1900-1-1");
-                        } else if (rowId == 1) {
-                            dt = Date.valueOf("4096-12-31");
-                        } else {
-                            dt = Date.valueOf("2023-10-31");
-                            dt.setYear(123 + rowId * sign);
-                        }
-                        column.appendDate(dt);
-                        break;
-                    case DATETIME:
-                        Timestamp ts;
-                        if (rowId == 0) {
-                            ts = Timestamp.valueOf("1800-11-20 12:34:56");
-                        } else if (rowId == 1) {
-                            ts = Timestamp.valueOf("4096-11-30 11:22:33");
-                        } else {
-                            ts = Timestamp.valueOf("2023-12-30 22:33:44");
-                            ts.setYear(123 + rowId * sign);
-                        }
-                        column.appendTimestamp(ts);
-                        break;
-                    default:
-                        throw new IllegalStateException("unsupported column type: " + pbColumn.getType());
-                }
-            }
-        }
     }
 
     @ParameterizedTest
@@ -851,16 +600,15 @@ public class SegmentExportTest extends BaseFormatTest {
     public void testPartitionTable(String tableName) throws LoadNonSupportException, RequestException {
         String uuid = RandomStringUtils.randomAlphabetic(8);
         String stageDir = "s3a://bucket1/.staging_ut/" + uuid + "/";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         Validator.validateSegmentLoadExport(tableSchema);
-        TabletSchema.TabletSchemaPB tabletSchema = toPbTabletSchema(tableSchema);
+        Schema tabletSchema = StarRocksUtils.toArrowSchema(tableSchema);
 
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         long tableId = tableSchema.getId();
         long indexId = tableSchema.getIndexMetas().get(0).getIndexId();
 
         assertFalse(partitions.isEmpty());
-        String fastSchemaChange = tableSchema.isFastSchemaChange();
 
         int index = 0;
         for (TablePartition partition : partitions) {
@@ -875,31 +623,25 @@ public class SegmentExportTest extends BaseFormatTest {
                     String storagePath = stageDir + "/" + tableId + "/" + partition.getId() + "/"
                             + indexId + "/" + tabletId;
                     Map<String, String> options = settings.toMap();
-                    if (fastSchemaChange.equalsIgnoreCase("false")) {
-                        // http://10.37.55.121:8040/api/meta/header/15143
-                        String metaUrl = tablet.getMetaUrls().get(0);
-                        String metaContext = restClient.getTabletMeta(metaUrl);
-                        options.put("starrocks.format.metaContext", metaContext);
-                        options.put("starrocks.format.fastSchemaChange", fastSchemaChange);
-                    }
+                    String metaUrl = tablet.getMetaUrls().get(0);
+                    String metaContext = restClient.getTabletMeta(metaUrl);
+                    options.put("starrocks.format.metaContext", metaContext);
                     StarRocksWriter writer = new StarRocksWriter(tabletId,
-                            tabletSchema,
                             -1L,
+                            tabletSchema,
                             storagePath,
                             options);
                     writer.open();
-                    // write use chunk interface
-                    Chunk chunk = writer.newChunk(4096);
+                    // write use arrow interface
+                    try (VectorSchemaRoot vsr = VectorSchemaRoot.create(tabletSchema, writer.getRootAllocator())) {
+                        fillSampleDataWithinDays(vsr, 0, 200);
+                        writer.write(vsr);
+                        vsr.clear();
 
-                    chunk.reset();
-                    fillSampleDataWithinDays(tabletSchema, chunk, startRow, 200);
-                    writer.write(chunk);
-
-                    chunk.reset();
-                    fillSampleDataWithinDays(tabletSchema, chunk, startRow + 200, 200);
-                    writer.write(chunk);
-
-                    chunk.release();
+                        fillSampleDataWithinDays(vsr, 200, 200);
+                        writer.write(vsr);
+                        vsr.clear();
+                    }
                     writer.flush();
                     writer.finish();
                     writer.close();
@@ -911,16 +653,16 @@ public class SegmentExportTest extends BaseFormatTest {
             }
         }
 
-        String label = String.format("bypass_write_%s_%s_%s", DB_NAME, tableName, uuid);
+        String label = String.format("bypass_write_%s_%s_%s", dbName, tableName, uuid);
         String ak = settings.getS3AccessKey();
         String sk = settings.getS3SecretKey();
         String endpoint = settings.getS3Endpoint();
 
-        loadSegmentData(DB_NAME, label, stageDir, tableName, ak, sk, endpoint);
-        boolean res = waitUtilLoadFinished(DB_NAME, label);
+        loadSegmentData(dbName, label, stageDir, tableName, ak, sk, endpoint);
+        boolean res = waitUtilLoadFinished(dbName, label);
         assertTrue(res);
 
-        List<Map<String, String>> outputs = getTableRowNumGroupByDay(DB_NAME, tableName);
+        List<Map<String, String>> outputs = getTableRowNumGroupByDay(dbName, tableName);
         assertEquals(2, outputs.size());
         assertEquals(1000, Integer.valueOf(outputs.get(0).get("num")));
         assertEquals("2024-08-25", outputs.get(0).get("c_date"));
@@ -929,22 +671,20 @@ public class SegmentExportTest extends BaseFormatTest {
         assertEquals("2024-08-26", outputs.get(1).get("c_date"));
     }
 
-
     @ParameterizedTest
     @MethodSource("testListPartitionTable")
     public void testListPartitionTable(String tableName) throws LoadNonSupportException, RequestException {
         String uuid = RandomStringUtils.randomAlphabetic(8);
         String stageDir = "s3a://bucket1/.staging_ut/" + uuid + "/";
-        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, DB_NAME, tableName);
+        TableSchema tableSchema = restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName);
         Validator.validateSegmentLoadExport(tableSchema);
-        TabletSchema.TabletSchemaPB tabletSchema = toPbTabletSchema(tableSchema);
+        Schema tabletSchema = StarRocksUtils.toArrowSchema(tableSchema);
 
-        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, DB_NAME, tableName, false);
+        List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         long tableId = tableSchema.getId();
         long indexId = tableSchema.getIndexMetas().get(0).getIndexId();
 
         assertFalse(partitions.isEmpty());
-        String fastSchemaChange = tableSchema.isFastSchemaChange();
 
         int index = 0;
         for (TablePartition partition : partitions) {
@@ -959,31 +699,25 @@ public class SegmentExportTest extends BaseFormatTest {
                     String storagePath = stageDir + "/" + tableId + "/" + partition.getId() + "/"
                             + indexId + "/" + tabletId;
                     Map<String, String> options = settings.toMap();
-                    if (fastSchemaChange.equalsIgnoreCase("false")) {
-                        // http://10.37.55.121:8040/api/meta/header/15143
-                        String metaUrl = tablet.getMetaUrls().get(0);
-                        String metaContext = restClient.getTabletMeta(metaUrl);
-                        options.put("starrocks.format.metaContext", metaContext);
-                        options.put("starrocks.format.fastSchemaChange", fastSchemaChange);
-                    }
+                    String metaUrl = tablet.getMetaUrls().get(0);
+                    String metaContext = restClient.getTabletMeta(metaUrl);
+                    options.put("starrocks.format.metaContext", metaContext);
                     StarRocksWriter writer = new StarRocksWriter(tabletId,
-                            tabletSchema,
                             -1L,
+                            tabletSchema,
                             storagePath,
                             options);
                     writer.open();
-                    // write use chunk interface
-                    Chunk chunk = writer.newChunk(4096);
+                    // write use arrow interface
+                    try (VectorSchemaRoot vsr = VectorSchemaRoot.create(tabletSchema, writer.getRootAllocator())) {
+                        fillSampleDataWithinDays(vsr, 0, 200);
+                        writer.write(vsr);
+                        vsr.clear();
 
-                    chunk.reset();
-                    fillSampleDataWithinDays(tabletSchema, chunk, startRow, 200);
-                    writer.write(chunk);
-
-                    chunk.reset();
-                    fillSampleDataWithinDays(tabletSchema, chunk, startRow + 200, 200);
-                    writer.write(chunk);
-
-                    chunk.release();
+                        fillSampleDataWithinDays(vsr, 200, 200);
+                        writer.write(vsr);
+                        vsr.clear();
+                    }
                     writer.flush();
                     writer.finish();
                     writer.close();
@@ -995,16 +729,16 @@ public class SegmentExportTest extends BaseFormatTest {
             }
         }
 
-        String label = String.format("bypass_write_%s_%s_%s", DB_NAME, tableName, uuid);
+        String label = String.format("bypass_write_%s_%s_%s", dbName, tableName, uuid);
         String ak = settings.getS3AccessKey();
         String sk = settings.getS3SecretKey();
         String endpoint = settings.getS3Endpoint();
 
-        loadSegmentData(DB_NAME, label, stageDir, tableName, ak, sk, endpoint);
-        boolean res = waitUtilLoadFinished(DB_NAME, label);
+        loadSegmentData(dbName, label, stageDir, tableName, ak, sk, endpoint);
+        boolean res = waitUtilLoadFinished(dbName, label);
         assertTrue(res);
 
-        List<Map<String, String>> outputs = getTableRowNumGroupByCity(DB_NAME, tableName);
+        List<Map<String, String>> outputs = getTableRowNumGroupByCity(dbName, tableName);
         assertEquals(4, outputs.size());
         assertEquals(200, Integer.valueOf(outputs.get(0).get("num")));
         assertEquals("Beijing", outputs.get(0).get("c_string"));
@@ -1023,163 +757,293 @@ public class SegmentExportTest extends BaseFormatTest {
     // 1 fill the min value,
     // 2 fill null,
     // >=4 fill the base value * rowId * sign.
-    private static void fillSampleDataWithinDays(TabletSchema.TabletSchemaPB pbSchema, Chunk chunk, int startRowId, int numRows) {
-
-        for (int colIdx = 0; colIdx < pbSchema.getColumnCount(); colIdx++) {
-            TabletSchema.ColumnPB pbColumn = pbSchema.getColumn(colIdx);
-            Column column = chunk.getColumn(colIdx);
+    private static void fillSampleDataWithinDays(VectorSchemaRoot vsr, int startRowId, int numRows) {
+        for (int colIdx = 0; colIdx < vsr.getSchema().getFields().size(); colIdx++) {
+            Field field = vsr.getSchema().getFields().get(colIdx);
+            FieldVector fieldVector = vsr.getVector(colIdx);
             for (int rowIdx = 0; rowIdx < numRows; rowIdx++) {
                 int rowId = startRowId + rowIdx;
-                if ("rowid".equalsIgnoreCase(pbColumn.getName())) {
-                    column.appendInt(rowId);
+                if ("rowid".equalsIgnoreCase(field.getName())) {
+                    ((IntVector) fieldVector).setSafe(rowIdx, rowId);
                     continue;
                 }
-                DataType dataType = DataType.fromLiteral(pbColumn.getType()).get();
-
-                if (rowId == 2 && (dataType != DataType.DATE && !"c_string".equalsIgnoreCase(pbColumn.getName()))) {
-                    column.appendNull();
+                if ("rowid2".equalsIgnoreCase(field.getName())) {
+                    ((IntVector) fieldVector).setSafe(rowIdx, rowId);
                     continue;
                 }
-                int sign = (rowId % 2 == 0) ? -1 : 1;
 
-                switch (dataType) {
-                    case BOOLEAN:
-                        column.appendBool(rowId % 2 == 0);
-                        break;
-                    case TINYINT:
-                        if (rowId == 0) {
-                            column.appendByte(Byte.MAX_VALUE);
-                        } else if (rowId == 1) {
-                            column.appendByte(Byte.MIN_VALUE);
-                        } else {
-                            column.appendByte((byte) (rowId * sign));
+                if (rowId == 2 && (!field.getFieldType().getType().toString().equalsIgnoreCase("Date(DAY)") && !"c_string".equalsIgnoreCase(field.getName()))) {
+                    fieldVector.setNull(rowIdx);
+                    if (fieldVector.getChildrenFromFields().size() > 0) {
+                        for (FieldVector childVector : fieldVector.getChildrenFromFields()) {
+                            childVector.setNull(rowIdx);
                         }
+                    }
+                    continue;
+                }
+                fillFieldWithinTwoDays(field, rowId, fieldVector, rowIdx, 0);
+            }
+            fieldVector.setValueCount(numRows);
+        }
+
+        vsr.setRowCount(numRows);
+    }
+
+    private static void fillFieldWithinTwoDays(Field field, int rowId, FieldVector fieldVector, int rowIdx, int depth) {
+        String starRocksTypeName = field.getFieldType().getMetadata().get(StarRocksUtils.STARROKCS_COLUMN_TYPE);
+        int sign = (rowId % 2 == 0) ? -1 : 1;
+        DataType dataType = DataType.fromLiteral(starRocksTypeName).get();
+        switch (dataType) {
+            case BOOLEAN:
+                ((BitVector) fieldVector).setSafe(rowIdx, 1- (rowId % 2));
+                break;
+            case TINYINT:
+                if (rowId == 0) {
+                    ((TinyIntVector) fieldVector).setSafe(rowIdx, Byte.MAX_VALUE);
+                } else if (rowId == 1) {
+                    ((TinyIntVector) fieldVector).setSafe(rowIdx, Byte.MIN_VALUE);
+                } else {
+                    ((TinyIntVector) fieldVector).setSafe(rowIdx, rowId * sign);
+                }
+                break;
+            case SMALLINT:
+                if (rowId == 0) {
+                    ((SmallIntVector) fieldVector).setSafe(rowIdx, Short.MAX_VALUE);
+                } else if (rowId == 1) {
+                    ((SmallIntVector) fieldVector).setSafe(rowIdx, Short.MIN_VALUE);
+                } else {
+                    ((SmallIntVector) fieldVector).setSafe(rowIdx, (short) (rowId * 10 * sign));
+                }
+                break;
+            case INT:
+                if (rowId == 0) {
+                    ((IntVector) fieldVector).setSafe(rowIdx, Integer.MAX_VALUE);
+                } else if (rowId == 1) {
+                    ((IntVector) fieldVector).setSafe(rowIdx, Integer.MIN_VALUE);
+                } else {
+                    ((IntVector) fieldVector).setSafe(rowIdx, rowId * 100 * sign + depth);
+                }
+                break;
+            case BIGINT:
+                if (rowId == 0) {
+                    ((BigIntVector) fieldVector).setSafe(rowIdx, Long.MAX_VALUE);
+                } else if (rowId == 1) {
+                    ((BigIntVector) fieldVector).setSafe(rowIdx, Long.MIN_VALUE);
+                } else {
+                    ((BigIntVector) fieldVector).setSafe(rowIdx, rowId * 1000L * sign);
+                }
+                break;
+            case LARGEINT:
+                if (rowId == 0) {
+                    ((Decimal256Vector) fieldVector).setSafe(rowIdx, new BigDecimal("99999999999999999999999999999999999999"));
+                } else if (rowId == 1) {
+                    ((Decimal256Vector) fieldVector).setSafe(rowIdx, new BigDecimal("-99999999999999999999999999999999999999"));
+                } else {
+                    ((Decimal256Vector) fieldVector).setSafe(rowIdx, BigDecimal.valueOf(rowId * 10000L * sign));
+                }
+                break;
+            case FLOAT:
+                ((Float4Vector) fieldVector).setSafe(rowIdx, 123.45678901234f * rowId * sign);
+                break;
+            case DOUBLE:
+                ((Float8Vector) fieldVector).setSafe(rowIdx, 23456.78901234 * rowId * sign);
+                break;
+            case DECIMAL:
+                // decimal v2 type
+                BigDecimal bdv2;
+                if (rowId == 0) {
+                    bdv2 = new BigDecimal("-12345678901234567890123.4567");
+                } else if (rowId == 1) {
+                    bdv2 = new BigDecimal("999999999999999999999999.9999");
+                } else {
+                    bdv2 = new BigDecimal("1234.56789");
+                    bdv2 = bdv2.multiply(BigDecimal.valueOf(sign));
+                }
+                ((DecimalVector) fieldVector).setSafe(rowIdx, bdv2);
+                break;
+            case DECIMAL32:
+            case DECIMAL64:
+            case DECIMAL128:
+                ArrowType.Decimal decimalType = (ArrowType.Decimal) field.getFieldType().getType();
+                BigDecimal bd;
+                if (rowId == 0) {
+                    if (decimalType.getPrecision() <= 9) {
+                        bd = new BigDecimal("9999999.5678");
+                    } else if (decimalType.getPrecision() <= 18) {
+                        bd = new BigDecimal("999999999999999.56789");
+                    } else {
+                        bd = new BigDecimal("9999999999999999999999999999999999.56789");
+                    }
+                } else if (rowId == 1) {
+                    if (decimalType.getPrecision() <= 9) {
+                        bd = new BigDecimal("-9999999.5678");
+                    } else if (decimalType.getPrecision() <= 18) {
+                        bd = new BigDecimal("-999999999999999.56789");
+                    } else {
+                        bd = new BigDecimal("-9999999999999999999999999999999999.56789");
+                    }
+                } else {
+                    if (decimalType.getPrecision() <= 9) {
+                        bd = new BigDecimal("12345.5678");
+                    } else if (decimalType.getPrecision() <= 18) {
+                        bd = new BigDecimal("123456789012.56789");
+                    } else {
+                        bd = new BigDecimal("12345678901234567890123.56789");
+                    }
+                    bd = bd.multiply(BigDecimal.valueOf((long) rowId * sign));
+                }
+                bd = bd.setScale(decimalType.getScale(), RoundingMode.HALF_UP);
+                ((DecimalVector) fieldVector).setSafe(rowIdx, bd);
+                break;
+            case CHAR:
+            case VARCHAR: {
+                String strValue = "";
+                if (rowId % 4 == 0) {
+                    strValue = "Beijing";
+                } else if (rowId % 4 == 1) {
+                    strValue = "Hangzhou";
+                } else if (rowId % 4 == 2) {
+                    strValue = "Los Angeles";
+                } else if (rowId % 4 == 3) {
+                    strValue = "San Francisco";
+                }
+                ((VarCharVector) fieldVector).setSafe(rowIdx, strValue.getBytes());
+            }
+            break;
+            case OBJECT:
+            case BITMAP: {
+                byte[] bitmapValue = new byte[]{0x00};
+                switch (rowId % 4) {
+                    case 0:
+                        bitmapValue = new byte[]{0x01, 0x00, 0x00, 0x00, 0x00};
                         break;
-                    case SMALLINT:
-                        if (rowId == 0) {
-                            column.appendShort(Short.MAX_VALUE);
-                        } else if (rowId == 1) {
-                            column.appendShort(Short.MIN_VALUE);
-                        } else {
-                            column.appendShort((short) (rowId * 10 * sign));
-                        }
+                    case 1:
+                        bitmapValue = new byte[]{0x01, (byte) 0xE8, 0x03, 0x00, 0x00};
                         break;
-                    case INT:
-                        if (rowId == 0) {
-                            column.appendInt(Integer.MAX_VALUE);
-                        } else if (rowId == 1) {
-                            column.appendInt(Integer.MIN_VALUE);
-                        } else {
-                            column.appendInt(rowId * 100 * sign);
-                        }
+                    case 3:
+                        bitmapValue = new byte[]{0x1, (byte) 0xB8, 0xB, 0x0, 0x0};
                         break;
-                    case BIGINT:
-                        if (rowId == 0) {
-                            column.appendLong(Long.MAX_VALUE);
-                        } else if (rowId == 1) {
-                            column.appendLong(Long.MIN_VALUE);
-                        } else {
-                            column.appendLong(rowId * 1000L * sign);
-                        }
+                }
+                ((VarBinaryVector) fieldVector).setSafe(rowIdx, bitmapValue);
+            }
+            break;
+            case HLL: {
+                byte[] hllValue = new byte[]{0x00};
+                switch (rowId % 4) {
+                    case 0:
+                        hllValue = new byte[]{0x00};
                         break;
-                    case LARGEINT:
-                        if (rowId == 0) {
-                            column.appendLargeInt(new BigInteger("6693349846790746512344567890123456789"));
-                        } else if (rowId == 1) {
-                            column.appendLargeInt(new BigInteger("-6693349846790746512344567890123456789"));
-                        } else {
-                            column.appendLargeInt(BigInteger.valueOf(rowId * 10000L * sign));
-                        }
+                    case 1:
+                        hllValue = new byte[]{0x1, 0x1, 0x44, 0x6, (byte) 0xC3, (byte) 0x80, (byte) 0x9E, (byte) 0x9D, (byte) 0xE6, 0x14};
                         break;
-                    case FLOAT:
-                        column.appendFloat(123.45678901234f * rowId * sign);
+                    case 3:
+                        hllValue = new byte[]{0x1, 0x1, (byte) 0x9A, 0x5, (byte) 0xE4, (byte) 0xE6, 0x65, 0x76, 0x4, 0x28};
                         break;
-                    case DOUBLE:
-                        column.appendDouble(23456.78901234 * rowId * sign);
-                        break;
-                    case DECIMAL:
-                        // decimal v2 type
-                        BigDecimal bdv2;
-                        if (rowId == 0) {
-                            bdv2 = new BigDecimal("-12345678901234567890123.4567");
-                        } else if (rowId == 1) {
-                            bdv2 = new BigDecimal("999999999999999999999999.9999");
-                        } else {
-                            bdv2 = new BigDecimal("1234.56789");
-                            bdv2 = bdv2.multiply(BigDecimal.valueOf(sign));
-                        }
-                        column.appendDecimal(bdv2);
-                        break;
-                    case DECIMAL32:
-                    case DECIMAL64:
-                    case DECIMAL128:
-                        BigDecimal bd;
-                        if (rowId == 0) {
-                            if (pbColumn.getPrecision() <= 9) {
-                                bd = new BigDecimal("9999.5678");
-                            } else if (pbColumn.getPrecision() <= 18) {
-                                bd = new BigDecimal("99999999999.56789");
-                            } else {
-                                bd = new BigDecimal("9999999999999999999999999999.56789");
-                            }
-                        } else if (rowId == 1) {
-                            if (pbColumn.getPrecision() <= 9) {
-                                bd = new BigDecimal("-9999.5678");
-                            } else if (pbColumn.getPrecision() <= 18) {
-                                bd = new BigDecimal("-99999999999.56789");
-                            } else {
-                                bd = new BigDecimal("-9999999999999999999999999999.56789");
-                            }
-                        } else {
-                            if (pbColumn.getPrecision() <= 9) {
-                                bd = new BigDecimal("125.5678");
-                            } else if (pbColumn.getPrecision() <= 18) {
-                                bd = new BigDecimal("12348902.56789");
-                            } else {
-                                bd = new BigDecimal("1234564567890123.56789");
-                            }
-                            bd = bd.multiply(BigDecimal.valueOf((long) rowId * sign))
-                                    .setScale(pbColumn.getFrac(), RoundingMode.HALF_UP);
-                        }
-                        column.appendDecimal(bd);
-                        break;
-                    case CHAR:
-                    case VARCHAR:
-                        if (rowId % 4 == 0) {
-                            column.appendString("Beijing");
-                        } else if (rowId % 4 == 1) {
-                            column.appendString("Hangzhou");
-                        } else if (rowId % 4 == 2) {
-                            column.appendString("Los Angeles");
-                        } else if (rowId % 4 == 3) {
-                            column.appendString("San Francisco");
-                        }
-                        break;
-                    case DATE:
-                        Date dt;
-                        if (sign == 1) {
-                            dt = Date.valueOf("2024-08-25");
-                        } else {
-                            dt = Date.valueOf("2024-08-26");
-                        }
-                        column.appendDate(dt);
-                        break;
-                    case DATETIME:
-                        Timestamp ts;
-                        if (rowId == 0) {
-                            ts = Timestamp.valueOf("1800-11-20 12:34:56");
-                        } else if (rowId == 1) {
-                            ts = Timestamp.valueOf("4096-11-30 11:22:33");
-                        } else {
-                            ts = Timestamp.valueOf("2023-12-30 22:33:44");
-                            ts.setYear(123 + rowId * sign);
-                        }
-                        column.appendTimestamp(ts);
-                        break;
-                    default:
-                        throw new IllegalStateException("unsupported column type: " + pbColumn.getType());
+                }
+                ((VarBinaryVector) fieldVector).setSafe(rowIdx, hllValue);
+            }
+            break;
+            case BINARY:
+            case VARBINARY:
+                String valuePrefix = field.getName() + ":name" + rowId + ":";
+                ByteBuffer buffer = ByteBuffer.allocate(valuePrefix.getBytes().length + 4);
+                buffer.put(valuePrefix.getBytes());
+                buffer.putInt(rowId);
+                ((VarBinaryVector) fieldVector).setSafe(rowIdx, buffer.array());
+                break;
+            case JSON: {
+                Gson gson = new Gson();
+                Map<String, Object> jsonMap = new HashMap<>();
+                jsonMap.put("rowid", rowId);
+                boolean boolVal = rowId % 2 == 0;
+                jsonMap.put("bool", boolVal);
+                int intVal = 0;
+                if (rowId == 0) {
+                    intVal = Integer.MAX_VALUE;
+                } else if (rowId == 1) {
+                    intVal = Integer.MIN_VALUE;
+                } else {
+                    intVal = rowId * 100 * sign;
+                }
+                jsonMap.put("int", intVal);
+                jsonMap.put("varchar", field.getName() + ":name" + rowId);
+                String json = gson.toJson(jsonMap);
+                ((VarCharVector) fieldVector).setSafe(rowIdx, json.getBytes(), 0, json.getBytes().length);
+            }
+            break;
+            case DATE: {
+                Date dt;
+                if (sign == 1) {
+                    dt = Date.valueOf("2024-08-25");
+                } else {
+                    dt = Date.valueOf("2024-08-26");
+                }
+                if (fieldVector instanceof DateDayVector) {
+                    ((DateDayVector) fieldVector).setSafe(rowIdx, (int) dt.toLocalDate().toEpochDay());
+                } else if (fieldVector instanceof DateMilliVector) {
+                    ((DateMilliVector) fieldVector).setSafe(rowIdx, dt.toLocalDate().toEpochDay() * 24 * 3600 * 1000);
+                } else {
+                    throw new IllegalStateException("unsupported column type: " + field.getType());
                 }
             }
+            break;
+            case DATETIME:
+                LocalDateTime ts;
+                if (rowId == 0) {
+                    ts = LocalDateTime.parse("1800-11-20T12:34:56");
+                } else if (rowId == 1) {
+                    ts = LocalDateTime.parse("4096-11-30T11:22:33");
+                } else {
+                    ts = LocalDateTime.parse("2023-12-30T22:33:44");
+                    ts = ts.withYear(1900 + 123 + rowId * sign);
+                }
+                ZoneOffset offset = ZoneId.systemDefault().getRules().getOffset(ts);
+                ((TimeStampVector) fieldVector).setSafe(rowIdx, ts.toInstant(offset).toEpochMilli());
+                break;
+            case ARRAY: {
+                List<FieldVector> children = fieldVector.getChildrenFromFields();
+                int elementSize = (rowId + depth) % 4;
+                ((ListVector) fieldVector).startNewValue(rowIdx);
+                for (FieldVector childVector : children) {
+                    if (childVector instanceof IntVector) {
+                        int intVal = rowId * 100 * sign;
+                        int startOffset = childVector.getValueCount();
+                        for (int arrayIndex = 0; arrayIndex < elementSize; arrayIndex++) {
+                            ((IntVector) childVector).setSafe(startOffset + arrayIndex, intVal + depth + arrayIndex);
+                        }
+                        childVector.setValueCount(startOffset + elementSize);
+                    }
+                }
+                ((ListVector) fieldVector).endValue(rowIdx, elementSize);
+            }
+            break;
+            case MAP: {
+                List<FieldVector> children = fieldVector.getChildrenFromFields();
+                int elementSize = rowId % 4;
+                ((ListVector) fieldVector).startNewValue(rowIdx);
+                UnionMapWriter mapWriter = ((MapVector) fieldVector).getWriter();
+                mapWriter.setPosition(rowIdx);
+                mapWriter.startMap();
+                int intVal = rowId * 100 * sign;
+                for (int arrayIndex = 0; arrayIndex < elementSize; arrayIndex++) {
+                    mapWriter.startEntry();
+                    mapWriter.key().integer().writeInt(intVal + depth + arrayIndex);
+                    mapWriter.value().varChar().writeVarChar("mapvalue:" + (intVal + depth + arrayIndex));
+                    mapWriter.endEntry();
+                }
+                mapWriter.endMap();
+            }
+            break;
+            case STRUCT: {
+                List<FieldVector> children = ((StructVector) fieldVector).getChildrenFromFields();
+                for (FieldVector childVector : children) {
+                    fillFieldWithinTwoDays(childVector.getField(), rowId, childVector, rowIdx, depth + 1);
+                }
+                ((StructVector) fieldVector).setIndexDefined(rowIdx);
+            }
+            break;
+            default:
+                throw new IllegalStateException("unsupported column type: " + field.getType());
         }
     }
 

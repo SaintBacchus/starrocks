@@ -40,6 +40,7 @@ StatusOr<int64_t> S3InputStream::read(void* out, int64_t count) {
     if (_offset >= _size) {
         return 0;
     }
+    count = std::min(count, _size - _offset);
 
     // prefetch case:
     // case1: pretech is disable: _read_ahead_size = -1     -> direct read from s3

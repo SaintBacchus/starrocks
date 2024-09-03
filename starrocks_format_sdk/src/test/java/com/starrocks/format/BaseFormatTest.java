@@ -28,15 +28,13 @@ import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.DateDayVector;
 import org.apache.arrow.vector.DateMilliVector;
-import org.apache.arrow.vector.Decimal256Vector;
 import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.Float4Vector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.SmallIntVector;
-import org.apache.arrow.vector.TimeStampMilliVector;
-import org.apache.arrow.vector.TimeStampVector;
+import org.apache.arrow.vector.TimeStampMicroTZVector;
 import org.apache.arrow.vector.TinyIntVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VarCharVector;
@@ -50,6 +48,8 @@ import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.types.pojo.Schema;
+import org.apache.arrow.vector.util.DateUtility;
+import org.apache.commons.lang3.StringUtils;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 
@@ -67,12 +67,11 @@ import java.sql.PreparedStatement;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -85,6 +84,8 @@ public class BaseFormatTest {
 
     protected static final String STARROCKS_FORMAT_QUERY_PLAN = "starrocks.format.query_plan";
     protected static final String STARROCKS_FORMAT_USING_COLUMN_UID = "starrocks.format.using_column_uid";
+
+    protected static final ZoneId TZ = ZoneId.systemDefault();
 
     protected static ConnSettings settings;
 
@@ -133,16 +134,19 @@ public class BaseFormatTest {
     }
 
     public static Field toArrowField(TabletSchema.ColumnPB column) {
-        ArrowType arrowType = StarRocksUtils.toArrowType(column.getType(),
-                Optional.ofNullable(column.getPrecision()).orElse(0),
-                Optional.ofNullable(column.getFrac()).orElse(0));
+        ArrowType arrowType = StarRocksUtils.toArrowType(
+                column.getType(),
+                TZ,
+                column.getPrecision(),
+                column.getFrac()
+        );
         Map<String, String> metadata = new HashMap<>();
         metadata.put(StarRocksUtils.STARROKCS_COLUMN_ID, String.valueOf(column.getUniqueId()));
         metadata.put(StarRocksUtils.STARROKCS_COLUMN_TYPE, column.getType());
         metadata.put(StarRocksUtils.STARROKCS_COLUMN_IS_KEY, String.valueOf(column.getIsKey()));
         metadata.put(StarRocksUtils.STARROKCS_COLUMN_MAX_LENGTH, String.valueOf(column.getLength()));
         metadata.put(StarRocksUtils.STARROKCS_COLUMN_AGGREGATION_TYPE,
-                Optional.ofNullable(column.getAggregation()).orElse("NONE"));
+                StringUtils.defaultIfBlank(column.getAggregation(), "NONE"));
         metadata.put(StarRocksUtils.STARROKCS_COLUMN_IS_AUTO_INCREMENT, String.valueOf(column.getIsAutoIncrement()));
 
         List<Field> children = new ArrayList<>();
@@ -195,7 +199,7 @@ public class BaseFormatTest {
 
                 if ("rowid".equalsIgnoreCase(field.getName())) {
                     if (field.getFieldType().getType().getTypeID() == ArrowType.ArrowTypeID.Utf8) {
-                        rowId = Integer.valueOf(new String(((VarCharVector) fieldVector).get(rowIdx), StandardCharsets.UTF_8));
+                        rowId = Integer.parseInt(new String(((VarCharVector) fieldVector).get(rowIdx), StandardCharsets.UTF_8));
                     } else {
                         rowId = ((IntVector) fieldVector).get(rowIdx);
                     }
@@ -208,7 +212,7 @@ public class BaseFormatTest {
                 FieldVector fieldVector = vsr.getVector(colIdx);
                 if ("rowid".equalsIgnoreCase(field.getName())) {
                     if (field.getFieldType().getType().getTypeID() == ArrowType.ArrowTypeID.Utf8) {
-                        rowId = Integer.valueOf(new String(((VarCharVector) fieldVector).get(rowIdx), StandardCharsets.UTF_8));
+                        rowId = Integer.parseInt(new String(((VarCharVector) fieldVector).get(rowIdx), StandardCharsets.UTF_8));
                     } else {
                         rowId = ((IntVector) fieldVector).get(rowIdx);
                     }
@@ -268,7 +272,6 @@ public class BaseFormatTest {
                 }
                 break;
             case "SMALLINT":
-                ArrowType.Int intType = (ArrowType.Int) field.getFieldType().getType();
                 if (rowId == 0) {
                     assertEquals(Short.MAX_VALUE, ((SmallIntVector) fieldVector).get(rowIdx));
                 } else if (rowId == 1) {
@@ -301,17 +304,16 @@ public class BaseFormatTest {
                 }
                 assertEquals(longValue, ((BigIntVector) fieldVector).get(rowIdx));
                 break;
-
             case "LARGEINT":
-                BigDecimal bd2;
+                String largeIntVal;
                 if (rowId == 0) {
-                    bd2 = new BigDecimal("99999999999999999999999999999999999999");
+                    largeIntVal = "99999999999999999999999999999999999999";
                 } else if (rowId == 1) {
-                    bd2 = new BigDecimal("-99999999999999999999999999999999999999");
+                    largeIntVal = "-99999999999999999999999999999999999999";
                 } else {
-                    bd2 = BigDecimal.valueOf(rowId * 10000L * sign);
+                    largeIntVal = String.valueOf(rowId * 10000L * sign);
                 }
-                assertEquals(bd2, ((Decimal256Vector) fieldVector).getObject(rowIdx));
+                assertEquals(largeIntVal, new String(((VarCharVector) fieldVector).get(rowIdx), StandardCharsets.UTF_8));
                 break;
             case "FLOAT":
             case "DOUBLE":
@@ -457,7 +459,10 @@ public class BaseFormatTest {
                     ts = LocalDateTime.parse("2023-12-30T22:33:44");
                     ts = ts.withYear(1900 + 123 + rowId * sign);
                 }
-                assertEquals(ts, ((TimeStampMilliVector) fieldVector).getObject(rowIdx));
+                final long micros = ((TimeStampMicroTZVector) fieldVector).getObject(rowIdx);
+                LocalDateTime dateTimeValue = DateUtility.getLocalDateTimeFromEpochMicro(micros, ((ArrowType.Timestamp)(field.getFieldType().getType())).getTimezone());
+                assertTrue(ts.until(dateTimeValue, ChronoUnit.SECONDS) <= 343,
+                        "Expected: " + ts + " , Actual: " + dateTimeValue);
                 break;
             case "ARRAY": {
                 List<FieldVector> children = fieldVector.getChildrenFromFields();
@@ -538,10 +543,10 @@ public class BaseFormatTest {
     private static void fillField(Field field, int rowId, FieldVector fieldVector, int rowIdx, int depth) {
         String starRocksTypeName = field.getFieldType().getMetadata().get(StarRocksUtils.STARROKCS_COLUMN_TYPE);
         int sign = (rowId % 2 == 0) ? -1 : 1;
-        DataType dataType = DataType.fromLiteral(starRocksTypeName).get();
+        DataType dataType = DataType.elegantOf(starRocksTypeName).get();
         switch (dataType) {
             case BOOLEAN:
-                ((BitVector) fieldVector).setSafe(rowIdx, 1- (rowId % 2));
+                ((BitVector) fieldVector).setSafe(rowIdx, 1 - (rowId % 2));
                 break;
             case TINYINT:
                 if (rowId == 0) {
@@ -580,12 +585,15 @@ public class BaseFormatTest {
                 }
                 break;
             case LARGEINT:
+                VarCharVector largeIntFieldVector = (VarCharVector) fieldVector;
                 if (rowId == 0) {
-                    ((Decimal256Vector) fieldVector).setSafe(rowIdx, new BigDecimal("99999999999999999999999999999999999999"));
+                    largeIntFieldVector.setSafe(rowIdx,
+                            "99999999999999999999999999999999999999".getBytes(StandardCharsets.UTF_8));
                 } else if (rowId == 1) {
-                    ((Decimal256Vector) fieldVector).setSafe(rowIdx, new BigDecimal("-99999999999999999999999999999999999999"));
+                    largeIntFieldVector.setSafe(rowIdx,
+                            "-99999999999999999999999999999999999999".getBytes(StandardCharsets.UTF_8));
                 } else {
-                    ((Decimal256Vector) fieldVector).setSafe(rowIdx, BigDecimal.valueOf(rowId * 10000L * sign));
+                    largeIntFieldVector.setSafe(rowIdx, String.valueOf(rowId * 10000L * sign).getBytes(StandardCharsets.UTF_8));
                 }
                 break;
             case FLOAT:
@@ -652,32 +660,34 @@ public class BaseFormatTest {
             break;
             case OBJECT:
             case BITMAP: {
-                byte[] bitmapValue = new byte[]{0x00};
+                byte[] bitmapValue = new byte[] {0x00};
                 switch (rowId % 4) {
                     case 0:
-                        bitmapValue = new byte[]{0x01, 0x00, 0x00, 0x00, 0x00};
+                        bitmapValue = new byte[] {0x01, 0x00, 0x00, 0x00, 0x00};
                         break;
                     case 1:
-                        bitmapValue = new byte[]{0x01, (byte) 0xE8, 0x03, 0x00, 0x00};
+                        bitmapValue = new byte[] {0x01, (byte) 0xE8, 0x03, 0x00, 0x00};
                         break;
                     case 3:
-                        bitmapValue = new byte[]{0x1, (byte) 0xB8, 0xB, 0x0, 0x0};
+                        bitmapValue = new byte[] {0x1, (byte) 0xB8, 0xB, 0x0, 0x0};
                         break;
                 }
                 ((VarBinaryVector) fieldVector).setSafe(rowIdx, bitmapValue);
             }
             break;
             case HLL: {
-                byte[] hllValue = new byte[]{0x00};
+                byte[] hllValue = new byte[] {0x00};
                 switch (rowId % 4) {
                     case 0:
-                        hllValue = new byte[]{0x00};
+                        hllValue = new byte[] {0x00};
                         break;
                     case 1:
-                        hllValue = new byte[]{0x1, 0x1, 0x44, 0x6, (byte) 0xC3, (byte) 0x80, (byte) 0x9E, (byte) 0x9D, (byte) 0xE6, 0x14};
+                        hllValue =
+                                new byte[] {0x1, 0x1, 0x44, 0x6, (byte) 0xC3, (byte) 0x80, (byte) 0x9E, (byte) 0x9D, (byte) 0xE6,
+                                        0x14};
                         break;
                     case 3:
-                        hllValue = new byte[]{0x1, 0x1, (byte) 0x9A, 0x5, (byte) 0xE4, (byte) 0xE6, 0x65, 0x76, 0x4, 0x28};
+                        hllValue = new byte[] {0x1, 0x1, (byte) 0x9A, 0x5, (byte) 0xE4, (byte) 0xE6, 0x65, 0x76, 0x4, 0x28};
                         break;
                 }
                 ((VarBinaryVector) fieldVector).setSafe(rowIdx, hllValue);
@@ -740,8 +750,8 @@ public class BaseFormatTest {
                     ts = LocalDateTime.parse("2023-12-30T22:33:44");
                     ts = ts.withYear(1900 + 123 + rowId * sign);
                 }
-                ZoneOffset offset = ZoneId.systemDefault().getRules().getOffset(ts);
-                ((TimeStampVector) fieldVector).setSafe(rowIdx, ts.toInstant(offset).toEpochMilli());
+                ((TimeStampMicroTZVector) fieldVector)
+                        .setSafe(rowIdx, ts.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() * 1000L);
                 break;
             case ARRAY: {
                 List<FieldVector> children = fieldVector.getChildrenFromFields();
@@ -761,7 +771,6 @@ public class BaseFormatTest {
             }
             break;
             case MAP: {
-                List<FieldVector> children = fieldVector.getChildrenFromFields();
                 int elementSize = rowId % 4;
                 ((ListVector) fieldVector).startNewValue(rowIdx);
                 UnionMapWriter mapWriter = ((MapVector) fieldVector).getWriter();

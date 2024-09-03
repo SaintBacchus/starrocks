@@ -58,7 +58,7 @@ public class StarRocksWriterTest extends BaseFormatTest {
     public void testTransactionWrite(String tableName) throws Exception {
         String label = String.format("bypass_write_%s_%s_%s",
                 dbName, tableName, RandomStringUtils.randomAlphabetic(8));
-        Schema schema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName));
+        Schema schema = StarRocksUtils.toArrowSchema(restClient.getTableSchema(DEFAULT_CATALOG, dbName, tableName), TZ);
         List<TablePartition> partitions = restClient.listTablePartitions(DEFAULT_CATALOG, dbName, tableName, false);
         assertFalse(partitions.isEmpty());
 

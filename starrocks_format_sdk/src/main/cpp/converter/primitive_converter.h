@@ -36,8 +36,10 @@
 
 namespace starrocks::lake::format {
 
-constexpr int64_t MS_PER_DAY = 24 * 60 * 60 * 1000;
+constexpr int64_t MILLI_PER_DAY = 24 * 60 * 60 * 1000;
 constexpr int64_t SECONDS_PER_DAY = 24 * 60 * 60;
+constexpr int64_t MILLI_PER_SECOND = 1 * 1000;
+constexpr int64_t MICRO_PER_SECOND = 1 * 1000 * 1000;
 
 template <arrow::Type::type ARROW_TYPE_ID, starrocks::LogicalType SR_TYPE,
           typename = std::enable_if<arrow::is_boolean_type<typename arrow::TypeIdTraits<ARROW_TYPE_ID>>::value ||
@@ -51,15 +53,28 @@ class PrimitiveConverter : public ColumnConverter {
     using SrColumnType = starrocks::RunTimeColumnType<SR_TYPE>;
     using SrCppType = starrocks::RunTimeCppType<SR_TYPE>;
 
-    //
+private:
+    cctz::time_zone _ctz;
+
 public:
     PrimitiveConverter(const std::shared_ptr<arrow::DataType> arrow_type,
                        const std::shared_ptr<starrocks::Field> sr_field, const arrow::MemoryPool* pool)
-            : ColumnConverter(arrow_type, sr_field, pool){};
+            : ColumnConverter(arrow_type, sr_field, pool) {
+        if constexpr (ARROW_TYPE_ID == arrow::Type::TIMESTAMP) {
+            const auto& real_type = arrow::internal::checked_pointer_cast<ArrorType>(_arrow_type);
+            auto timezone = real_type->timezone();
+            if (!TimezoneUtils::find_cctz_time_zone(timezone, _ctz)) {
+                LOG(WARNING) << "Unsupported timezone " << timezone;
+            }
+        } else {
+            _ctz = cctz::local_time_zone();
+        }
+    };
 
     arrow::Result<std::shared_ptr<arrow::Array>> toArrowArray(const std::shared_ptr<starrocks::Column>& column) {
         using ArrowBuilderType = typename arrow::TypeTraits<ArrorType>::BuilderType;
 
+        const auto& real_arrow_type = arrow::internal::checked_pointer_cast<ArrorType>(_arrow_type);
         std::unique_ptr<ArrowBuilderType> builder =
                 std::make_unique<ArrowBuilderType>(_arrow_type, const_cast<arrow::MemoryPool*>(_pool));
         size_t num_rows = column->size();
@@ -77,11 +92,17 @@ public:
             if constexpr (SR_TYPE == starrocks::LogicalType::TYPE_DATE ||
                           SR_TYPE == starrocks::LogicalType::TYPE_DATETIME) {
                 if constexpr (std::is_base_of_v<arrow::Date32Type, ArrorType>) {
-                    ARROW_RETURN_NOT_OK(builder->Append((column_data[i].to_unixtime() / MS_PER_DAY)));
+                    ARROW_RETURN_NOT_OK(builder->Append((column_data[i].to_unixtime() / MILLI_PER_DAY)));
                 } else if constexpr (std::is_base_of_v<arrow::Date64Type, ArrorType>) {
-                    ARROW_RETURN_NOT_OK(builder->Append(column_data[i].to_unixtime()));
+                    ARROW_RETURN_NOT_OK(builder->Append((column_data[i].to_unixtime())));
                 } else {
-                    ARROW_RETURN_NOT_OK(builder->Append(column_data[i].to_unixtime()));
+                    if (real_arrow_type->unit() == arrow::TimeUnit::MILLI) {
+                        ARROW_RETURN_NOT_OK(builder->Append(column_data[i].to_unixtime(_ctz)));
+                    } else if (real_arrow_type->unit() == arrow::TimeUnit::MICRO) {
+                        ARROW_RETURN_NOT_OK(builder->Append(column_data[i].to_unixtime(_ctz) * MICROS_PER_MILLI));
+                    } else {
+                        return arrow::Status::Invalid("Unsupported timeUnit ", real_arrow_type->unit());
+                    }
                 }
             } else if constexpr (SR_TYPE == starrocks::LogicalType::TYPE_DECIMAL32 ||
                                  SR_TYPE == starrocks::LogicalType::TYPE_DECIMAL64 ||
@@ -112,6 +133,7 @@ public:
         auto num_rows = array->length();
         out->resize(num_rows);
         // copy data column
+        const auto& real_arrow_type = arrow::internal::checked_pointer_cast<ArrorType>(_arrow_type);
         const auto& real_array = arrow::internal::checked_pointer_cast<const ArrowArrayType>(array);
         const auto data_column = arrow::internal::checked_pointer_cast<SrColumnType>(get_data_column(out));
         if constexpr (SR_TYPE == starrocks::LogicalType::TYPE_DATE ||
@@ -121,19 +143,23 @@ public:
                 if constexpr (std::is_base_of_v<arrow::Date32Type, ArrorType>) {
                     ArrowCType arrow_value = real_array->Value(i);
                     starrocks::TimestampValue ts;
-                    int64_t seconds = arrow_value * SECONDS_PER_DAY;
-                    ts.from_unixtime(seconds, cctz::local_time_zone());
+                    ts.from_unixtime(arrow_value * SECONDS_PER_DAY, _ctz);
                     value = (starrocks::DateValue)ts;
                 } else if constexpr (std::is_base_of_v<arrow::Date64Type, ArrorType>) {
                     ArrowCType arrow_value = real_array->Value(i);
                     starrocks::TimestampValue ts;
-                    int64_t seconds = arrow_value / 1000;
-                    ts.from_unixtime(seconds, cctz::local_time_zone());
+                    ts.from_unixtime(arrow_value / MILLIS_PER_SEC, _ctz);
                     value = (starrocks::DateValue)ts;
                 } else {
                     ArrowCType arrow_value = real_array->Value(i);
-                    int64_t seconds = arrow_value / 1000;
-                    value.from_unixtime(seconds, TimezoneUtils::local_time_zone());
+                    if (real_arrow_type->unit() == arrow::TimeUnit::MILLI) {
+                        value.from_unixtime(arrow_value / MILLIS_PER_SEC,
+                                            arrow_value % MILLIS_PER_SEC * MICROS_PER_MILLI, _ctz);
+                    } else if (real_arrow_type->unit() == arrow::TimeUnit::MICRO) {
+                        value.from_unixtime(arrow_value / MICRO_PER_SECOND, arrow_value % MICRO_PER_SECOND, _ctz);
+                    } else {
+                        return arrow::Status::Invalid("Unsupported timeUnit ", real_arrow_type->unit());
+                    }
                 }
                 data_column->get_data()[i] = value;
             }

@@ -153,7 +153,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.1.0</version>
                 <executions>
-                 <!-- <execution>
+                 <execution>
                         <id>jni-build-arrow</id>
                         <phase>compile</phase>
                         <goals>
@@ -163,7 +163,7 @@
                             <executable>build-scripts/build-arrow.sh</executable>
                             <workingDirectory>./</workingDirectory>
                         </configuration>
-                    </execution> -->
+                    </execution>
                     <execution>
                         <id>jni-cpp-cmake</id>
                         <phase>compile</phase>

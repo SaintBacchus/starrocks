@@ -26,7 +26,7 @@ jobs:
       - name: be
         commands:
           # -j 12 to avoid kill by system while linking
-          - sh build.sh --be -j 12 --use-staros --without-java-ext
+          - sh build.sh --be -j 12 --use-staros --clean
 
 
   starrocks_format_sdk:

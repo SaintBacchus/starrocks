@@ -43,7 +43,7 @@ jobs:
           - sh .codebase/run-sr-format-sdk-test.sh
 
   starrocks_segment_export:
-    image:  hub.byted.org/compile/emr-starrocks-lh-3.2-builder:2c266cb90107e5a861524f2852363b40
+    image:  hub.byted.org/compile/emr-starrocks-lh-3.2-builder:7eb457be55abb90297fd90d8ed7b496e
     working-directory: emr-core/StarRocks
     runs-on:
       spec: m1.8xlarge

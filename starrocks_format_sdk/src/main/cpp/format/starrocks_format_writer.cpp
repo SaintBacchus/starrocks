@@ -13,8 +13,6 @@
 // limitations under the License.
 #define FMT_HEADER_ONLY
 
-#include "starrocks_format_writer.h"
-
 #include <glog/logging.h>
 #include <json2pb/json_to_pb.h>
 
@@ -78,7 +76,6 @@ public:
         }
         _max_rows_per_segment =
                 getIntOrDefault(_options, "starrocks.format.rows_per_segment", std::numeric_limits<uint32_t>::max());
-
     }
 
     arrow::Status open() override {
@@ -154,120 +151,120 @@ public:
     }
 
 private:
-        Status finish_schema_pb() {
-            std::string tablet_schema_path = _tablet_root_path + "/tablet.schema";
+    Status finish_schema_pb() {
+        std::string tablet_schema_path = _tablet_root_path + "/tablet.schema";
 
-            if (_tablet_schema) {
-                std::shared_ptr<TabletSchemaPB> pb = std::make_shared<TabletSchemaPB>();
-                _tablet_schema->to_schema_pb(pb.get());
-                auto fs_options = filter_map_by_key_prefix(_options, "fs.");
-                ASSIGN_OR_RETURN(auto fs, FileSystem::Create(tablet_schema_path, FSOptions(fs_options)));
-                size_t index = 0;
-                string uuid = generate_uuid_string();
-                for (auto& f : _tablet_writer->files()) {
-                    if (is_segment(f.path)) {
-                        string dat_file = _tablet_root_path + "/data/" + f.path;
-                        string target_pb = dat_file + ".pb";
-                        ProtobufFile pb_file(target_pb, fs);
-                        _segment_pbs[index]->set_segment_id(index);
-                        if (index == 0) {
-                            _segment_pbs[index]->set_num_rows(_tablet_writer->num_rows());
-                            _segment_pbs[index]->set_row_size(_total_row_size);
-                        }
-                        RETURN_IF_ERROR(pb_file.save(*_segment_pbs[index]));
-                        LOG(INFO) << "Write file to the dfs: " << _segment_pbs[index]->DebugString();
-                        index++;
-
-                    } else {
-                        return Status::InternalError(fmt::format("unknown file {}", f.path));
-                    }
-                }
-                ProtobufFile file(tablet_schema_path, fs);
-                return file.save(*pb);
-            } else {
-                return Status::InternalError("_tablet_schema was not defined");
-            }
-        }
-        Status finish_txn_log() {
-            auto txn_log = std::make_shared<TxnLog>();
-            txn_log->set_tablet_id(_tablet_id);
-            txn_log->set_txn_id(_txn_id);
-            auto op_write = txn_log->mutable_op_write();
+        if (_tablet_schema) {
+            std::shared_ptr<TabletSchemaPB> pb = std::make_shared<TabletSchemaPB>();
+            _tablet_schema->to_schema_pb(pb.get());
+            auto fs_options = filter_map_by_key_prefix(_options, "fs.");
+            ASSIGN_OR_RETURN(auto fs, FileSystem::Create(tablet_schema_path, FSOptions(fs_options)));
+            size_t index = 0;
+            string uuid = generate_uuid_string();
             for (auto& f : _tablet_writer->files()) {
                 if (is_segment(f.path)) {
-                    op_write->mutable_rowset()->add_segments(std::move(f.path));
-                    op_write->mutable_rowset()->add_segment_size(f.size.value());
-                } else if (is_del(f.path)) {
-                    op_write->add_dels(std::move(f.path));
+                    string dat_file = _tablet_root_path + "/data/" + f.path;
+                    string target_pb = dat_file + ".pb";
+                    ProtobufFile pb_file(target_pb, fs);
+                    _segment_pbs[index]->set_segment_id(index);
+                    if (index == 0) {
+                        _segment_pbs[index]->set_num_rows(_tablet_writer->num_rows());
+                        _segment_pbs[index]->set_row_size(_total_row_size);
+                    }
+                    RETURN_IF_ERROR(pb_file.save(*_segment_pbs[index]));
+                    LOG(INFO) << "Write file to the dfs: " << _segment_pbs[index]->DebugString();
+                    index++;
+
                 } else {
                     return Status::InternalError(fmt::format("unknown file {}", f.path));
                 }
             }
-            op_write->mutable_rowset()->set_num_rows(_tablet_writer->num_rows());
-            op_write->mutable_rowset()->set_data_size(_tablet_writer->data_size());
-            op_write->mutable_rowset()->set_overlapped(false);
-            return put_txn_log(std::move(txn_log));
+            ProtobufFile file(tablet_schema_path, fs);
+            return file.save(*pb);
+        } else {
+            return Status::InternalError("_tablet_schema was not defined");
+        }
+    }
+    Status finish_txn_log() {
+        auto txn_log = std::make_shared<TxnLog>();
+        txn_log->set_tablet_id(_tablet_id);
+        txn_log->set_txn_id(_txn_id);
+        auto op_write = txn_log->mutable_op_write();
+        for (auto& f : _tablet_writer->files()) {
+            if (is_segment(f.path)) {
+                op_write->mutable_rowset()->add_segments(std::move(f.path));
+                op_write->mutable_rowset()->add_segment_size(f.size.value());
+            } else if (is_del(f.path)) {
+                op_write->add_dels(std::move(f.path));
+            } else {
+                return Status::InternalError(fmt::format("unknown file {}", f.path));
+            }
+        }
+        op_write->mutable_rowset()->set_num_rows(_tablet_writer->num_rows());
+        op_write->mutable_rowset()->set_data_size(_tablet_writer->data_size());
+        op_write->mutable_rowset()->set_overlapped(false);
+        return put_txn_log(std::move(txn_log));
+    }
+
+    Status put_txn_log(const TxnLogPtr& log) {
+        if (UNLIKELY(!log->has_tablet_id())) {
+            return Status::InvalidArgument("txn log does not have tablet id");
+        }
+        if (UNLIKELY(!log->has_txn_id())) {
+            return Status::InvalidArgument("txn log does not have txn id");
         }
 
-        Status put_txn_log(const TxnLogPtr& log) {
-            if (UNLIKELY(!log->has_tablet_id())) {
-                return Status::InvalidArgument("txn log does not have tablet id");
-            }
-            if (UNLIKELY(!log->has_txn_id())) {
-                return Status::InvalidArgument("txn log does not have txn id");
-            }
+        auto txn_log_path = _provider->txn_log_location(log->tablet_id(), log->txn_id());
+        auto fs_options = filter_map_by_key_prefix(_options, "fs.");
+        ASSIGN_OR_RETURN(auto fs, FileSystem::Create(txn_log_path, FSOptions(fs_options)));
+        ProtobufFile file(txn_log_path, fs);
+        return file.save(*log);
 
-            auto txn_log_path = _provider->txn_log_location(log->tablet_id(), log->txn_id());
-            auto fs_options = filter_map_by_key_prefix(_options, "fs.");
-            ASSIGN_OR_RETURN(auto fs, FileSystem::Create(txn_log_path, FSOptions(fs_options)));
-            ProtobufFile file(txn_log_path, fs);
-            return file.save(*log);
+        return Status::OK();
+    }
 
-            return Status::OK();
+    StatusOr<TabletMetadataPtr> get_tablet_metadata(std::shared_ptr<FileSystem> fs) {
+        std::vector<std::string> objects{};
+        // TODO: construct prefix in LocationProvider
+        std::string prefix = fmt::format("{:016X}_", _tablet_id);
+        auto root = _provider->metadata_root_location(_tablet_id);
+
+        auto scan_cb = [&](std::string_view name) {
+            if (HasPrefixString(name, prefix)) {
+                objects.emplace_back(join_path(root, name));
+            }
+            return true;
+        };
+        RETURN_IF_ERROR(fs->iterate_dir(root, scan_cb));
+
+        if (objects.size() == 0) {
+            return Status::NotFound(fmt::format("tablet {} metadata not found", _tablet_id));
         }
+        std::sort(objects.begin(), objects.end());
+        auto metadata_location = objects.back();
+        return _lake_tablet_manager->get_tablet_metadata(fs, metadata_location, true);
+    }
 
-        StatusOr<TabletMetadataPtr> get_tablet_metadata(std::shared_ptr<FileSystem> fs) {
-            std::vector<std::string> objects{};
-            // TODO: construct prefix in LocationProvider
-            std::string prefix = fmt::format("{:016X}_", _tablet_id);
-            auto root = _provider->metadata_root_location(_tablet_id);
-
-            auto scan_cb = [&](std::string_view name) {
-                if (HasPrefixString(name, prefix)) {
-                    objects.emplace_back(join_path(root, name));
-                }
-                return true;
-            };
-            RETURN_IF_ERROR(fs->iterate_dir(root, scan_cb));
-
-            if (objects.size() == 0) {
-                return Status::NotFound(fmt::format("tablet {} metadata not found", _tablet_id));
-            }
-            std::sort(objects.begin(), objects.end());
-            auto metadata_location = objects.back();
-            return _lake_tablet_manager->get_tablet_metadata(fs, metadata_location, true);
-        }
-
-    private:
-        // input members
-        int64_t _tablet_id;
-        int64_t _txn_id;
-        std::shared_ptr<arrow::Schema> _output_schema;
-        std::string _tablet_root_path;
-        std::unordered_map<std::string, std::string> _options;
-        // other members
-        std::shared_ptr<TabletSchema> _tablet_schema;
-        std::unique_ptr<Tablet> _tablet;
-        WriterType _writer_type;
-        uint32_t _max_rows_per_segment;
-        std::shared_ptr<FixedLocationProvider> _provider;
-        std::unique_ptr<TabletWriter> _tablet_writer;
-        std::shared_ptr<RecordBatchToChunkConverter> _arrow_converter;
-        bool _share_data = true;
-        std::string _tablet_context;
-        std::vector<std::shared_ptr<SegmentPB>> _segment_pbs;
-        size_t _total_row_size = 0;
-    };
+private:
+    // input members
+    int64_t _tablet_id;
+    int64_t _txn_id;
+    std::shared_ptr<arrow::Schema> _output_schema;
+    std::string _tablet_root_path;
+    std::unordered_map<std::string, std::string> _options;
+    // other members
+    std::shared_ptr<TabletSchema> _tablet_schema;
+    std::unique_ptr<Tablet> _tablet;
+    WriterType _writer_type;
+    uint32_t _max_rows_per_segment;
+    std::shared_ptr<FixedLocationProvider> _provider;
+    std::unique_ptr<TabletWriter> _tablet_writer;
+    std::shared_ptr<RecordBatchToChunkConverter> _arrow_converter;
+    bool _share_data = true;
+    std::string _tablet_context;
+    std::vector<std::shared_ptr<SegmentPB>> _segment_pbs;
+    size_t _total_row_size = 0;
+};
 
 arrow::Result<StarRocksFormatWriter*> StarRocksFormatWriter::create(
         int64_t tablet_id, int64_t txn_id, const struct ArrowSchema* output_arrow_schema,

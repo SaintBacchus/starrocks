@@ -21,10 +21,13 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.starrocks.format.DataType;
 
+import java.io.Serializable;
 import java.util.List;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
-public class Column {
+public class Column implements Serializable {
+
+    private static final long serialVersionUID = -2443476992489195839L;
 
     @JsonProperty("name")
     private String name;
@@ -63,7 +66,9 @@ public class Column {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public static class Type {
+    public static class Type implements Serializable {
+
+        private static final long serialVersionUID = 5342044260068193334L;
 
         @JsonProperty("name")
         private String name;

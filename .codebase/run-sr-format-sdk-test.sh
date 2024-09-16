@@ -23,7 +23,7 @@ if [ $exit_code -ne 0 ];then
 fi
 
 echo "----------config cluster ..."
-mysql -h 127.0.0.1  -P 9030 -u root < .codebase/setup.sql
+mysql -h 127.0.0.1  -P 9030 -u root -f < .codebase/setup.sql
 
 echo "----------start run starrocks_format_sdk..."
 cd ${STARROCKS_HOME}/starrocks_format_sdk

@@ -30,6 +30,7 @@
 #include "column/column_helper.h"
 #include "column/field.h"
 #include "types/logical_type.h"
+#include "util/decimal_types.h"
 #include "util/json.h"
 #include "util/slice.h"
 
@@ -46,7 +47,8 @@ class BinaryConverter : public ColumnConverter {
 
     //
 public:
-    BinaryConverter(const std::shared_ptr<arrow::DataType> arrow_type, const std::shared_ptr<starrocks::Field> sr_field,
+    BinaryConverter(const std::shared_ptr<arrow::DataType> arrow_type, 
+                    const std::shared_ptr<starrocks::Field> sr_field,
                     const arrow::MemoryPool* pool)
             : ColumnConverter(arrow_type, sr_field, pool){};
 
@@ -71,6 +73,11 @@ public:
                           SR_TYPE == starrocks::LogicalType::TYPE_VARBINARY) {
                 starrocks::Slice slice = column_data[i];
                 ARROW_RETURN_NOT_OK(builder->Append(slice.data, slice.size));
+            } else if constexpr (SR_TYPE == starrocks::LogicalType::TYPE_LARGEINT) {
+                SrCppType sr_value = column_data[i];
+                std::string value = starrocks::DecimalV3Cast::to_string<int128_t>(
+                    sr_value, starrocks::decimal_precision_limit<int128_t>, 0);
+                ARROW_RETURN_NOT_OK(builder->Append(value));
             } else if constexpr (SR_TYPE == starrocks::LogicalType::TYPE_JSON) {
                 auto item = down_cast<const SrColumnType*>(data_column)->get_object(i);
                 FORMAT_ASSIGN_OR_RAISE_ARROW_STATUS(auto json_value, item->to_string());
@@ -125,6 +132,12 @@ public:
                     }
                 }
                 out->append_datum(Datum(slice));
+            } else if constexpr (SR_TYPE == starrocks::LogicalType::TYPE_LARGEINT) {
+                SrCppType value = 0;
+                if (starrocks::DecimalV3Cast::from_string<int128_t>(&value, 40, 0, slice.data, slice.size)) {
+                    return arrow::Status::Invalid("The value ", slice, " is exceed the max of largeint!");
+                }
+                out->append_datum(Datum(value));
             } else if constexpr (SR_TYPE == starrocks::LogicalType::TYPE_JSON) {
                 const auto result = JsonValue::parse(slice);
                 if (!result.ok()) {

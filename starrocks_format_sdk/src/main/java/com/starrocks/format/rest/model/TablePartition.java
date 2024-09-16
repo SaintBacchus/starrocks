@@ -59,6 +59,9 @@ public class TablePartition {
     @JsonProperty("endKeys")
     private List<Object> endKeys;
 
+    @JsonProperty("inKeys")
+    private List<List<Object>> inKeys;
+
     @JsonProperty("storagePath")
     private String storagePath;
 
@@ -90,6 +93,14 @@ public class TablePartition {
 
     public void setBucketNum(Integer bucketNum) {
         this.bucketNum = bucketNum;
+    }
+
+    public String getDistributionType() {
+        return distributionType;
+    }
+
+    public void setDistributionType(String distributionType) {
+        this.distributionType = distributionType;
     }
 
     public Long getVisibleVersion() {
@@ -146,6 +157,14 @@ public class TablePartition {
 
     public void setEndKeys(List<Object> endKeys) {
         this.endKeys = endKeys;
+    }
+
+    public List<List<Object>> getInKeys() {
+        return inKeys;
+    }
+
+    public void setInKeys(List<List<Object>> inKeys) {
+        this.inKeys = inKeys;
     }
 
     public String getStoragePath() {

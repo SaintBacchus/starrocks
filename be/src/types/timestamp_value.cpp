@@ -825,6 +825,14 @@ int64_t TimestampValue::to_unix_second() const {
 }
 
 // return milliseconds since epoch.
+int64_t TimestampValue::to_unixtime(const cctz::time_zone& ctz) const {
+    int64_t zone_offset = TimezoneUtils::to_utc_offset(ctz);
+    int64_t result = to_unixtime();
+    result -= zone_offset * MILLIS_PER_SEC;
+    return result;
+}
+
+// return milliseconds since epoch.
 int64_t TimestampValue::to_unixtime() const {
     int64_t result = timestamp::to_julian(_timestamp);
     result *= SECS_PER_DAY;

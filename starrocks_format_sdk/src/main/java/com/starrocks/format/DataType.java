@@ -17,8 +17,7 @@
 
 package com.starrocks.format;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.Arrays;
 import java.util.Optional;
 
 public enum DataType {
@@ -49,19 +48,6 @@ public enum DataType {
     MAP(24, "MAP"),
     STRUCT(25, "STRUCT");
 
-    private static final Map<String, DataType> REVERSED_MAPPING = new HashMap<>(values().length);
-
-    static {
-        for (DataType dataType : values()) {
-            String typeLiteral = dataType.getLiteral().toUpperCase();
-            if (REVERSED_MAPPING.containsKey(typeLiteral)) {
-                throw new IllegalStateException("duplicated data type literal: " + dataType.getLiteral());
-            }
-
-            REVERSED_MAPPING.put(typeLiteral, dataType);
-        }
-    }
-
     private final int id;
     private final String literal;
     private final boolean supported;
@@ -76,20 +62,23 @@ public enum DataType {
         this.supported = supported;
     }
 
-    public static Optional<DataType> fromLiteral(String literal) {
-        return Optional.ofNullable(literal).map(l -> REVERSED_MAPPING.get(l.toUpperCase()));
+    public static DataType of(String nameOrLiteral) {
+        return elegantOf(nameOrLiteral)
+                .orElseThrow(() -> new IllegalArgumentException("Unsupported data type: " + nameOrLiteral));
+    }
+
+    public static Optional<DataType> elegantOf(String nameOrLiteral) {
+        return Arrays.stream(values())
+                .filter(dt -> dt.name().equalsIgnoreCase(nameOrLiteral)
+                        || dt.getLiteral().equalsIgnoreCase(nameOrLiteral))
+                .findFirst();
     }
 
     public static boolean isSupported(String dataType) {
-        if (null == dataType) {
-            return false;
-        }
-
-        DataType dt = REVERSED_MAPPING.get(dataType.toUpperCase());
-        return null != dt && dt.isSupported();
+        return elegantOf(dataType).filter(DataType::isSupported).isPresent();
     }
 
-    public static boolean isUnsupported(String dataType) {
+    public static boolean notSupported(String dataType) {
         return !isSupported(dataType);
     }
 

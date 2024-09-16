@@ -16,12 +16,10 @@
 // under the License.
 package com.starrocks.format;
 
-import com.starrocks.proto.Data;
 import com.starrocks.proto.TabletSchema.ColumnPB;
 import com.starrocks.proto.TabletSchema.KeysType;
 import com.starrocks.proto.TabletSchema.TabletSchemaPB;
 import com.starrocks.proto.Types.CompressionTypePB;
-import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -33,9 +31,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
 import java.nio.file.Path;
-import java.util.*;
+import java.util.HashMap;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 
 public class StarRocksReaderWriterLocalTest extends BaseFormatTest {
@@ -53,7 +52,7 @@ public class StarRocksReaderWriterLocalTest extends BaseFormatTest {
                 .setKeysType(KeysType.DUP_KEYS)
                 .setCompressionType(CompressionTypePB.LZ4_FRAME);
 
-        ColumnType[] columnTypes = new ColumnType[]{
+        ColumnType[] columnTypes = new ColumnType[] {
                 new ColumnType(DataType.INT, 4),
                 new ColumnType(DataType.BOOLEAN, 4),
                 new ColumnType(DataType.TINYINT, 1),
@@ -159,7 +158,7 @@ public class StarRocksReaderWriterLocalTest extends BaseFormatTest {
         schemaBuilder.addColumn(columnBuilder.build());
 
 
-        ColumnType[] columnTypes = new ColumnType[]{
+        ColumnType[] columnTypes = new ColumnType[] {
                 new ColumnType(DataType.JSON, 4)};
         int colId = 2;
         for (ColumnType columnType : columnTypes) {
@@ -200,7 +199,7 @@ public class StarRocksReaderWriterLocalTest extends BaseFormatTest {
         long version = 1;
         setupTabletMeta(tabletRootPath, tabletSchemaPB, tabletId, version);
 
-        Schema schema  = toArrowSchema(tabletSchemaPB);
+        Schema schema = toArrowSchema(tabletSchemaPB);
 
         StarRocksWriter writer = new StarRocksWriter(tabletId,
                 txnId,
@@ -212,11 +211,11 @@ public class StarRocksReaderWriterLocalTest extends BaseFormatTest {
         // write use chunk interface
         VectorSchemaRoot vsr = VectorSchemaRoot.create(schema, writer.getRootAllocator());
 
-        VarCharVector fieldVector = (VarCharVector)vsr.getVector(2);
+        VarCharVector fieldVector = (VarCharVector) vsr.getVector(2);
         // normal append
-        IntVector vector =  (IntVector)vsr.getVector(0);
+        IntVector vector = (IntVector) vsr.getVector(0);
         vector.setSafe(0, 1);
-        vector =  (IntVector)vsr.getVector(1);
+        vector = (IntVector) vsr.getVector(1);
         vector.setSafe(0, 1);
         String value = generateFixedLengthString(100);
         fieldVector.setSafe(0, value.getBytes());
@@ -225,9 +224,9 @@ public class StarRocksReaderWriterLocalTest extends BaseFormatTest {
         vsr.close();
         // abnormal append
         try {
-            vector =  (IntVector)vsr.getVector(0);
+            vector = (IntVector) vsr.getVector(0);
             vector.setSafe(0, 1);
-            vector =  (IntVector)vsr.getVector(1);
+            vector = (IntVector) vsr.getVector(1);
             vector.setSafe(0, 1);
             value = generateFixedLengthString(16 * 1024 * 1024 + 1);
             fieldVector.setSafe(0, value.getBytes());
@@ -250,7 +249,7 @@ public class StarRocksReaderWriterLocalTest extends BaseFormatTest {
                 .setKeysType(KeysType.DUP_KEYS)
                 .setCompressionType(CompressionTypePB.LZ4_FRAME);
 
-        ColumnType[] columnTypes = new ColumnType[]{
+        ColumnType[] columnTypes = new ColumnType[] {
                 new ColumnType(DataType.CHAR, 9),
                 new ColumnType(DataType.VARCHAR, 17)};
 
@@ -327,7 +326,7 @@ public class StarRocksReaderWriterLocalTest extends BaseFormatTest {
                 .setKeysType(KeysType.DUP_KEYS)
                 .setCompressionType(CompressionTypePB.LZ4_FRAME);
 
-        ColumnType[] types = new ColumnType[]{
+        ColumnType[] types = new ColumnType[] {
                 new ColumnType(DataType.INT, 4),
                 new ColumnType(DataType.BOOLEAN, 4),
                 new ColumnType(DataType.TINYINT, 1),

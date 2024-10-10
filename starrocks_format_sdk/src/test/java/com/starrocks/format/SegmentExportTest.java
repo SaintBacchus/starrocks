@@ -792,7 +792,7 @@ public class SegmentExportTest extends BaseFormatTest {
     private static void fillFieldWithinTwoDays(Field field, int rowId, FieldVector fieldVector, int rowIdx, int depth) {
         String starRocksTypeName = field.getFieldType().getMetadata().get(StarRocksUtils.STARROKCS_COLUMN_TYPE);
         int sign = (rowId % 2 == 0) ? -1 : 1;
-        DataType dataType = DataType.fromLiteral(starRocksTypeName).get();
+        DataType dataType = DataType.elegantOf(starRocksTypeName).get();
         switch (dataType) {
             case BOOLEAN:
                 ((BitVector) fieldVector).setSafe(rowIdx, 1- (rowId % 2));

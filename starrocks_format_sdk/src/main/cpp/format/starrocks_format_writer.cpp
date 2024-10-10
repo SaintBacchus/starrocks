@@ -14,6 +14,7 @@
 #define FMT_HEADER_ONLY
 
 #include <glog/logging.h>
+#include <json2pb/json_to_pb.h>
 //arrow dependencies
 #include "arrow/array.h"
 #include "arrow/c/bridge.h"
@@ -56,9 +57,23 @@ public:
             std::string writer_type = it->second;
             _writer_type = WriterType(std::stoi(writer_type));
         }
+        auto mode_it = _options.find("starrocks.format.mode");
+        if (mode_it != _options.end()) {
+            std::string mode = mode_it->second;
+            if (mode == "share_nothing") {
+                _share_data = false;
+            }
+        }
+        if (!_share_data) {
+            auto url = _options.find("starrocks.format.metaContext");
+            if (url != _options.end()) {
+                _tablet_context = url->second;
+            } else {
+                LOG(WARNING) << "starrocks.format.metaContext was not be set in share_noting mode";
+            }
+        }
         _max_rows_per_segment =
                 getIntOrDefault(_options, "starrocks.format.rows_per_segment", std::numeric_limits<uint32_t>::max());
-   
     }
 
     arrow::Status open() override {
@@ -77,8 +92,20 @@ public:
             auto fs_options = filter_map_by_key_prefix(_options, "fs.");
             FORMAT_ASSIGN_OR_RAISE_ARROW_STATUS(auto fs, FileSystem::Create(_tablet_root_path, FSOptions(fs_options)));
             // get tablet schema;
-            FORMAT_ASSIGN_OR_RAISE_ARROW_STATUS(auto metadata, get_tablet_metadata(fs));
-            _tablet_schema = std::make_shared<TabletSchema>(metadata->schema());
+            if (_share_data) {
+                FORMAT_ASSIGN_OR_RAISE_ARROW_STATUS(auto metadata, get_tablet_metadata(fs));
+                _tablet_schema = std::make_shared<TabletSchema>(metadata->schema());
+            } else if (!_tablet_context.empty()) { // non fast schema change will use meta
+                TabletMetaPB tablet_meta_pb;
+                bool ret = json2pb::JsonToProtoMessage(_tablet_context, &tablet_meta_pb);
+                if (ret) {
+                    _tablet_schema = std::make_shared<TabletSchema>(tablet_meta_pb.schema());
+                } else {
+                    return to_arrow_status(Status::InternalError("Convert json to TabletMetaPB failed."));
+                }
+                LOG(INFO) << "Gain the tablet schema from context ";
+            }
+
             _tablet = std::make_unique<Tablet>(_lake_tablet_manager, _tablet_id, _provider, _tablet_schema);
             // create tablet writer
             FORMAT_ASSIGN_OR_RAISE_ARROW_STATUS(_tablet_writer,
@@ -101,19 +128,62 @@ public:
                               arrow::ImportRecordBatch(const_cast<struct ArrowArray*>(c_arrow_array), _output_schema));
         ARROW_ASSIGN_OR_RAISE(auto chunk, _arrow_converter->convert(rbatch));
         if (chunk && chunk->num_rows() > 0) {
-            return to_arrow_status(_tablet_writer->write(*chunk));
+            if (_segment_pbs.size() == 0 || !_segment_pbs.back()->path().empty()) {
+                _segment_pbs.emplace_back(std::make_shared<SegmentPB>());
+            }
+            _total_row_size += chunk->bytes_usage();
+            return to_arrow_status(_tablet_writer->write(*chunk, _segment_pbs.back().get()));
         }
         return arrow::Status::OK();
     }
 
-    arrow::Status flush() override { return to_arrow_status(_tablet_writer->flush()); }
+    arrow::Status flush() override { return to_arrow_status(_tablet_writer->flush(_segment_pbs.back().get())); }
 
     arrow::Status finish() override {
         _tablet_writer->finish();
-        return to_arrow_status(finish_txn_log());
+        if (_share_data) {
+            return to_arrow_status(finish_txn_log());
+        } else {
+            return to_arrow_status(finish_schema_pb());
+        }
     }
 
 private:
+    Status finish_schema_pb() {
+        std::string tablet_schema_path = _tablet_root_path + "/tablet.schema";
+
+        if (_tablet_schema) {
+            std::shared_ptr<TabletSchemaPB> pb = std::make_shared<TabletSchemaPB>();
+            _tablet_schema->to_schema_pb(pb.get());
+            auto fs_options = filter_map_by_key_prefix(_options, "fs.");
+            ASSIGN_OR_RETURN(auto fs, FileSystem::Create(tablet_schema_path, FSOptions(fs_options)));
+            size_t index = 0;
+            string uuid = generate_uuid_string();
+            for (auto& f : _tablet_writer->files()) {
+                if (is_segment(f.path)) {
+                    string dat_file = _tablet_root_path + "/data/" + f.path;
+                    string target_pb = dat_file + ".pb";
+                    ProtobufFile pb_file(target_pb, fs);
+                    _segment_pbs[index]->set_segment_id(index);
+                    if (index == 0) {
+                        _segment_pbs[index]->set_num_rows(_tablet_writer->num_rows());
+                        _segment_pbs[index]->set_row_size(_total_row_size);
+                    }
+                    RETURN_IF_ERROR(pb_file.save(*_segment_pbs[index]));
+                    LOG(INFO) << "Write file to the dfs: " << _segment_pbs[index]->DebugString();
+                    index++;
+
+                } else {
+                    return Status::InternalError(fmt::format("unknown file {}", f.path));
+                }
+            }
+            ProtobufFile file(tablet_schema_path, fs);
+            return file.save(*pb);
+        } else {
+            return Status::InternalError("_tablet_schema was not defined");
+        }
+    }
+
     Status finish_txn_log() {
         auto txn_log = std::make_shared<TxnLog>();
         txn_log->set_tablet_id(_tablet_id);
@@ -189,6 +259,10 @@ private:
     std::shared_ptr<FixedLocationProvider> _provider;
     std::unique_ptr<TabletWriter> _tablet_writer;
     std::shared_ptr<RecordBatchToChunkConverter> _arrow_converter;
+    bool _share_data = true;
+    std::string _tablet_context;
+    std::vector<std::shared_ptr<SegmentPB>> _segment_pbs;
+    size_t _total_row_size = 0;
 };
 
 arrow::Result<StarRocksFormatWriter*> StarRocksFormatWriter::create(

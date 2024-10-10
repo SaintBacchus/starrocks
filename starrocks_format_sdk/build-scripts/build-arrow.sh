@@ -41,6 +41,6 @@ cd $STARROCKS_HOME/starrocks_format_sdk/src/main/cpp/arrow
 # build arrow
 mkdir -p cpp/build
 cd cpp/build
-cmake ..  --preset  ninja-release-basic -DCMAKE_C_COMPILER=/opt/rh/gcc-toolset-10/root/usr/bin/gcc -DARROW_BUILD_STATIC=ON -DARROW_JEMALLOC=OFF
-cmake --build .
+#cmake ..  --preset  ninja-release-basic -DCMAKE_C_COMPILER=/opt/rh/gcc-toolset-10/root/usr/bin/gcc -DARROW_BUILD_STATIC=ON -DARROW_JEMALLOC=OFF
+#cmake --build .
 

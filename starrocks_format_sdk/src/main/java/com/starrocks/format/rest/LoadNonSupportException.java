@@ -15,17 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package com.starrocks.load;
+package com.starrocks.format.rest;
 
-public enum EtlJobType {
-    HADOOP,
-    MINI,
-    INSERT,
-    BROKER,
-    DELETE,
-    SPARK,
-    ROUTINE_LOAD,
-    STREAM_LOAD,
-    SEGMENT_LOAD,
-    UNKNOWN
+public class LoadNonSupportException extends Exception {
+    public LoadNonSupportException(String message) {
+        super(message);
+    }
 }

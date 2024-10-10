@@ -52,6 +52,10 @@ public class StarRocksUtils {
     public static final String STARROKCS_COLUMN_AGGREGATION_TYPE = "starrokcs.column.aggregationType";
     public static final String STARROKCS_COLUMN_IS_AUTO_INCREMENT = "starrokcs.column.IsAutoIncrement";
 
+    public static Schema toArrowSchema(TableSchema tableSchema) {
+        return toArrowSchema(tableSchema, ZoneId.systemDefault());
+    }
+
     public static Schema toArrowSchema(TableSchema tableSchema, ZoneId tz) {
         MaterializedIndexMeta indexMeta = tableSchema.getIndexMetas().get(0);
         Map<String, String> metadata = new HashMap<>();

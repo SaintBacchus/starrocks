@@ -26,7 +26,7 @@ jobs:
       - name: be
         commands:
           # -j 12 to avoid kill by system while linking
-          - sh run-be-ut.sh --use-staros -j 12
+          - sh build.sh --be -j 12 --use-staros --clean
 
 
   starrocks_format_sdk:
@@ -41,5 +41,18 @@ jobs:
           - mkdir -p /root/.m2/
           - cp .codebase/settings.xml /root/.m2/
           - sh .codebase/run-sr-format-sdk-test.sh
+
+  starrocks_segment_export:
+    image:  hub.byted.org/compile/emr-starrocks-lh-3.2-builder:7eb457be55abb90297fd90d8ed7b496e
+    working-directory: emr-core/StarRocks
+    runs-on:
+      spec: m1.8xlarge
+    steps:
+      - name: starrocks_segment_export
+        commands:
+          - mkdir -p /root/.m2/
+          - cp .codebase/settings.xml /root/.m2/
+          - sh .codebase/run-sr-segment-export.sh
+
 
 

@@ -815,11 +815,30 @@ void TimestampValue::trunc_to_quarter() {
     _timestamp = timestamp::from_datetime(year, month_to_quarter[month], 1, 0, 0, 0, 0);
 }
 
+// return seconds since epoch.
 int64_t TimestampValue::to_unix_second() const {
     int64_t result = timestamp::to_julian(_timestamp);
     result *= SECS_PER_DAY;
     result += timestamp::to_time(_timestamp) / USECS_PER_SEC;
     result -= timestamp::UNIX_EPOCH_SECONDS;
+    return result;
+}
+
+// return milliseconds since epoch.
+int64_t TimestampValue::to_unixtime(const cctz::time_zone& ctz) const {
+    int64_t zone_offset = TimezoneUtils::to_utc_offset(ctz);
+    int64_t result = to_unixtime();
+    result -= zone_offset * MILLIS_PER_SEC;
+    return result;
+}
+
+// return milliseconds since epoch.
+int64_t TimestampValue::to_unixtime() const {
+    int64_t result = timestamp::to_julian(_timestamp);
+    result *= SECS_PER_DAY;
+    result -= timestamp::UNIX_EPOCH_SECONDS;
+    result *= 1000L;
+    result += timestamp::to_time(_timestamp) / USECS_PER_MILLIS;
     return result;
 }
 

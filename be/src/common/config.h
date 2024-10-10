@@ -796,6 +796,10 @@ CONF_Int64(object_storage_connect_timeout_ms, "-1");
 // value is greater than 0 and less than 1000.
 // When it's 0, low speed limit check will be disabled.
 CONF_Int64(object_storage_request_timeout_ms, "-1");
+// Retry strategy for read operation. The following two parameters are the default value of Aws
+// DefaultRetryStrategy
+CONF_Int64(object_storage_max_retries, "10");
+CONF_Int64(object_storage_retry_scale_factor, "25");
 
 // text reader
 // Spilt text file's scan range into io ranges of 16mb size
@@ -922,6 +926,11 @@ CONF_Int32(starlet_s3_client_num_instances_per_cache, "1");
 CONF_mBool(starlet_fs_read_prefetch_enable, "false");
 // prefetch threadpool size
 CONF_mInt32(starlet_fs_read_prefetch_threadpool_size, "128");
+CONF_Int32(starlet_fslib_s3client_nonread_max_retries, "5");
+CONF_Int32(starlet_fslib_s3client_nonread_retry_scale_factor, "200");
+CONF_Int32(starlet_fslib_s3client_read_max_retries, "10");
+CONF_Int32(starlet_fslib_s3client_read_retry_scale_factor, "25");
+CONF_Int32(starlet_fslib_s3client_connect_timeout_ms, "1000");
 #endif
 
 CONF_mInt64(lake_metadata_cache_limit, /*2GB=*/"2147483648");
@@ -1178,4 +1187,7 @@ CONF_mInt64(pk_dump_interval_seconds, "3600"); // 1 hour
 
 // whether enable query profile for queries initiated by spark or flink
 CONF_mBool(enable_profile_for_external_plan, "false");
+
+// the max length supported for varchar type
+CONF_mInt32(olap_string_max_length, "1048576");
 } // namespace starrocks::config

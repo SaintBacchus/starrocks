@@ -2758,4 +2758,25 @@ public class Config extends ConfigBase {
 
     @ConfField(mutable = false)
     public static int jdbc_connection_idle_timeout_ms = 600000;
+
+    // The longest supported VARCHAR length.
+    @ConfField(mutable = true)
+    public static int max_varchar_length = 1048576;
+
+    /**
+     * EMR tos tag api configs.
+     */
+    @ConfField(mutable = false)
+    public static boolean emr_open_api_ssl_enable = true;
+    @ConfField(mutable = false)
+    public static String emr_open_api_endpoint = "open.volcengineapi.com";
+    @ConfField(mutable = false)
+    public static String emr_open_api_service_name = "emr";
+    @ConfField(mutable = true)
+    public static String emr_open_api_region = "cn-beijing";
+    @ConfField(mutable = true)
+    public static String emr_open_api_version = "2022-12-29";
+    @ConfField(mutable = true)
+    public static boolean emr_tos_bucket_tag_enabled = true;
+
 }

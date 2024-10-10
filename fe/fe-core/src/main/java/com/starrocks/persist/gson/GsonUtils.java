@@ -115,6 +115,7 @@ import com.starrocks.catalog.StructType;
 import com.starrocks.catalog.TableFunction;
 import com.starrocks.catalog.Tablet;
 import com.starrocks.catalog.View;
+import com.starrocks.http.rest.v2.vo.ColumnView;
 import com.starrocks.lake.LakeMaterializedView;
 import com.starrocks.lake.LakeTable;
 import com.starrocks.lake.LakeTablet;
@@ -409,6 +410,8 @@ public class GsonUtils {
 
     private static final JsonDeserializer<PrimitiveType> PRIMITIVE_TYPE_DESERIALIZER = new PrimitiveTypeDeserializer();
 
+    private static final JsonDeserializer<ColumnView.TypeView> COLUMN_TYPE_VO_DESERIALIZER = new TypeViewDeserializer();
+
     // the builder of GSON instance.
     // Add any other adapters if necessary.
     private static final GsonBuilder GSON_BUILDER = new GsonBuilder()
@@ -451,7 +454,8 @@ public class GsonUtils {
             .registerTypeAdapter(QueryDumpInfo.class, DUMP_INFO_DESERIALIZER)
             .registerTypeAdapter(HiveTableDumpInfo.class, HIVE_TABLE_DUMP_INFO_SERIALIZER)
             .registerTypeAdapter(HiveTableDumpInfo.class, HIVE_TABLE_DUMP_INFO_DESERIALIZER)
-            .registerTypeAdapter(PrimitiveType.class, PRIMITIVE_TYPE_DESERIALIZER);
+            .registerTypeAdapter(PrimitiveType.class, PRIMITIVE_TYPE_DESERIALIZER)
+            .registerTypeAdapter(ColumnView.TypeView.class, COLUMN_TYPE_VO_DESERIALIZER);
 
     // this instance is thread-safe.
     public static final Gson GSON = GSON_BUILDER.create();
@@ -733,4 +737,26 @@ public class GsonUtils {
         @SerializedName("expr")
         public String expressionSql;
     }
+
+    private static class TypeViewDeserializer implements JsonDeserializer<ColumnView.TypeView> {
+
+        @Override
+        public ColumnView.TypeView deserialize(JsonElement json,
+                                               java.lang.reflect.Type typeOfT,
+                                               JsonDeserializationContext context) throws JsonParseException {
+            JsonObject jsonObj = json.getAsJsonObject();
+            String typeName = jsonObj.get("name").getAsString();
+            if ("ARRAY".equalsIgnoreCase(typeName)) {
+                return context.deserialize(json, ColumnView.ArrayTypeView.class);
+            } else if ("STRUCT".equalsIgnoreCase(typeName)) {
+                return context.deserialize(json, ColumnView.StructTypeView.class);
+            } else if ("MAP".equalsIgnoreCase(typeName)) {
+                return context.deserialize(json, ColumnView.MapTypeView.class);
+            } else {
+                return context.deserialize(json, ColumnView.ScalarTypeView.class);
+            }
+        }
+
+    }
+
 }

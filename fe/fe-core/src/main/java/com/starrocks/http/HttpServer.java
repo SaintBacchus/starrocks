@@ -72,6 +72,8 @@ import com.starrocks.http.rest.GetSmallFileAction;
 import com.starrocks.http.rest.GetStreamLoadState;
 import com.starrocks.http.rest.HealthAction;
 import com.starrocks.http.rest.LoadAction;
+import com.starrocks.http.rest.MetaInfoService.GetDatabasesAction;
+import com.starrocks.http.rest.MetaInfoService.GetTablesAction;
 import com.starrocks.http.rest.MetaReplayerCheckAction;
 import com.starrocks.http.rest.MetricsAction;
 import com.starrocks.http.rest.MigrationAction;
@@ -87,11 +89,13 @@ import com.starrocks.http.rest.ShowRuntimeInfoAction;
 import com.starrocks.http.rest.StopFeAction;
 import com.starrocks.http.rest.StorageTypeCheckAction;
 import com.starrocks.http.rest.SyncCloudTableMetaAction;
+import com.starrocks.http.rest.TableDetailAction;
 import com.starrocks.http.rest.TableQueryPlanAction;
 import com.starrocks.http.rest.TableRowCountAction;
 import com.starrocks.http.rest.TableSchemaAction;
 import com.starrocks.http.rest.TransactionLoadAction;
 import com.starrocks.http.rest.TriggerAction;
+import com.starrocks.http.rest.v2.TablePartitionAction;
 import com.starrocks.leader.MetaHelper;
 import com.starrocks.metric.GaugeMetric;
 import com.starrocks.metric.GaugeMetricImpl;
@@ -212,9 +216,16 @@ public class HttpServer {
         DumpStarMgrAction.registerAction(controller, imageDir);
         RoleAction.registerAction(controller, imageDir);
 
+        // meta info action
+        GetDatabasesAction.registerAction(controller);
+        GetTablesAction.registerAction(controller);
+        TableDetailAction.registerAction(controller);
+
         // external usage
         TableRowCountAction.registerAction(controller);
         TableSchemaAction.registerAction(controller);
+        com.starrocks.http.rest.v2.TableSchemaAction.registerAction(controller);
+        TablePartitionAction.registerAction(controller);
         TableQueryPlanAction.registerAction(controller);
 
         BootstrapFinishAction.registerAction(controller);

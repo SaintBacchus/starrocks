@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public class TableSchemaView {
@@ -33,6 +34,9 @@ public class TableSchemaView {
 
     @SerializedName("name")
     private String name;
+
+    @SerializedName("state")
+    private String state;
 
     @SerializedName("tableType")
     private String tableType;
@@ -76,6 +80,15 @@ public class TableSchemaView {
     @SerializedName("properties")
     private Map<String, String> properties;
 
+    @SerializedName(value = "bfColumns")
+    protected Set<String> bfColumns;
+
+    @SerializedName("bfFpp")
+    private double bfFpp;
+
+    @SerializedName("compressionType")
+    private String compressionType;
+
     public TableSchemaView() {
     }
 
@@ -86,6 +99,8 @@ public class TableSchemaView {
         TableSchemaView svo = new TableSchemaView();
         svo.setId(table.getId());
         svo.setName(table.getName());
+        Optional.ofNullable(table.getState())
+                .ifPresent(state -> svo.setState(state.name()));
         Optional.ofNullable(table.getType())
                 .ifPresent(type -> svo.setTableType(TableType.serialize(type)));
         Optional.ofNullable(table.getKeysType())
@@ -129,7 +144,12 @@ public class TableSchemaView {
 
         Optional.ofNullable(table.getTableProperty())
                 .ifPresent(prop -> svo.setProperties(prop.getProperties()));
-
+        Optional.ofNullable(table.getCopiedBfColumns())
+                .ifPresent(svo::setBfColumns);
+        Optional.of(table.getBfFpp())
+                .ifPresent(svo::setBfFpp);
+        Optional.ofNullable(table.getCompressionType())
+                .ifPresent(type -> svo.setCompressionType(type.name()));
         return svo;
     }
 
@@ -147,6 +167,14 @@ public class TableSchemaView {
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    public String getState() {
+        return state;
+    }
+
+    public void setState(String state) {
+        this.state = state;
     }
 
     public String getTableType() {
@@ -259,5 +287,29 @@ public class TableSchemaView {
 
     public void setProperties(Map<String, String> properties) {
         this.properties = properties;
+    }
+
+    public Set<String> getBfColumns() {
+        return bfColumns;
+    }
+
+    public void setBfColumns(Set<String> bfColumns) {
+        this.bfColumns = bfColumns;
+    }
+
+    public double getBfFpp() {
+        return bfFpp;
+    }
+
+    public void setBfFpp(double bfFpp) {
+        this.bfFpp = bfFpp;
+    }
+
+    public String getCompressionType() {
+        return compressionType;
+    }
+
+    public void setCompressionType(String compressionType) {
+        this.compressionType = compressionType;
     }
 }

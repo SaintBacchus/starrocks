@@ -22,6 +22,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class TableSchema {
@@ -31,6 +32,9 @@ public class TableSchema {
 
     @JsonProperty("name")
     private String name;
+
+    @JsonProperty("state")
+    private String state;
 
     @JsonProperty("tableType")
     private String tableType;
@@ -74,6 +78,15 @@ public class TableSchema {
     @JsonProperty("properties")
     private Map<String, String> properties;
 
+    @JsonProperty(value = "bfColumns")
+    protected Set<String> bfColumns;
+
+    @JsonProperty("bfFpp")
+    private double bfFpp;
+
+    @JsonProperty("compressionType")
+    private String compressionType;
+
     public TableSchema() {
     }
 
@@ -91,6 +104,14 @@ public class TableSchema {
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    public String getState() {
+        return state;
+    }
+
+    public void setState(String state) {
+        this.state = state;
     }
 
     public String getTableType() {
@@ -203,5 +224,46 @@ public class TableSchema {
 
     public void setProperties(Map<String, String> properties) {
         this.properties = properties;
+    }
+
+    public Set<String> getBfColumns() {
+        return bfColumns;
+    }
+
+    public void setBfColumns(Set<String> bfColumns) {
+        this.bfColumns = bfColumns;
+    }
+
+    public double getBfFpp() {
+        return bfFpp;
+    }
+
+    public void setBfFpp(double bfFpp) {
+        this.bfFpp = bfFpp;
+    }
+
+    public String getCompressionType() {
+        return compressionType;
+    }
+
+    public void setCompressionType(String compressionType) {
+        this.compressionType = compressionType;
+    }
+
+    public String isFastSchemaChange() {
+        if (properties == null) {
+            return "false";
+        }
+        if (properties.containsKey("fast_schema_evolution")) {
+            if (properties.get("fast_schema_evolution").equalsIgnoreCase("false")) {
+                return "false";
+            } else if (properties.get("fast_schema_evolution").equalsIgnoreCase("true")) {
+                return "true";
+            } else {
+                return "false";
+            }
+        } else {
+            return "false";
+        }
     }
 }

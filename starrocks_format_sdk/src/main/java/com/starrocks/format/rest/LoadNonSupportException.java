@@ -15,26 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package com.starrocks.format;
+package com.starrocks.format.rest;
 
-public class JniWrapper {
-    public static final String JNI_LIB_VERSION = "3.2.3-ve-3";
-
-    private static final JniWrapper INSTANCE = new JniWrapper();
-
-    public static JniWrapper get() {
-        JniLoader.loadNativeLibrary(JNI_LIB_VERSION);
-        return INSTANCE;
+public class LoadNonSupportException extends Exception {
+    public LoadNonSupportException(String message) {
+        super(message);
     }
-
-    private JniWrapper() {
-    }
-
-    public native void releaseWriter(long writerAddress);
-
-    public native void releaseReader(long readerAddress);
-
-    public native void releaseChunk(long chunkAddress);
-
-
 }

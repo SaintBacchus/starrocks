@@ -21,6 +21,7 @@
         <jni.build.type>RELEASE</jni.build.type>
         <jni.build.directory>target/build-jni</jni.build.directory>
         <jni.so.name>starrocks_format_wrapper</jni.so.name>
+        <hadoop.so.path>${env.STARROCKS_THIRDPARTY}/installed/hadoop/lib/native/</hadoop.so.path>
     </properties>
 
     <dependencies>
@@ -120,6 +121,12 @@
             <version>2.8.6</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>mysql</groupId>
+            <artifactId>mysql-connector-java</artifactId>
+            <version>5.1.49</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
     <build>
         <sourceDirectory>src/main/java</sourceDirectory>
@@ -180,7 +187,7 @@
                 <artifactId>protobuf-maven-plugin</artifactId>
                 <version>0.5.1</version>
                 <configuration>
-                    <protocExecutable>/var/local/thirdparty/installed/bin/protoc</protocExecutable>
+                    <protocExecutable>${env.STARROCKS_THIRDPARTY}/installed/bin/protoc</protocExecutable>
                     <protoSourceRoot>../gensrc/proto</protoSourceRoot>
                     <outputDirectory>target/generated-sources/proto/</outputDirectory>
                     <clearOutputDirectory>false</clearOutputDirectory>
@@ -213,6 +220,12 @@
                                     <directory>${jni.build.directory}/${jni.build.type}</directory>
                                     <includes>
                                         <include>*.so</include>
+                                    </includes>
+                                </resource>
+                                <resource>
+                                    <directory>${hadoop.so.path}</directory>
+                                    <includes>
+                                        <include>libhdfs.so.0.0.0</include>
                                     </includes>
                                 </resource>
                             </resources>
@@ -297,7 +310,7 @@
         <profile>
             <id>format-lib</id>
             <properties>
-                <compile-be-parallel>12</compile-be-parallel>
+                <compile-be-parallel>32</compile-be-parallel>
             </properties>
             <build>
                 <plugins>

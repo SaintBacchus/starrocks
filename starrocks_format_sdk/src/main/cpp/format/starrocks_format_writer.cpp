@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <glog/logging.h>
-
 #include "starrocks_format_writer.h"
+
+#include <glog/logging.h>
+#include <json2pb/json_to_pb.h>
 
 #include "column/chunk.h"
 #include "column/column_helper.h"
@@ -47,6 +48,32 @@ StarRocksFormatWriter::StarRocksFormatWriter(int64_t tablet_id, std::shared_ptr<
         std::string writer_type = it->second;
         _writer_type = WriterType(std::stoi(writer_type));
     }
+    auto mode_it = _options.find("starrocks.format.mode");
+    if (mode_it != _options.end()) {
+        std::string mode = mode_it->second;
+        if (mode == "share_nothing") {
+            _share_data = false;
+        }
+    }
+    if (!_share_data) {
+        auto url = _options.find("starrocks.format.metaContext");
+        if (url != _options.end()) {
+            _tablet_context = url->second;
+        } else {
+            LOG(WARNING) << "starrocks.format.metaContext was not be set in share_noting mode";
+        }
+
+        auto it = _options.find("starrocks.format.fastSchemaChange");
+        if (it != _options.end()) {
+            if (it->second == "true") {
+                _fast_schema_change = true;
+            } else if (it->second == "false") {
+                _fast_schema_change = false;
+            }
+        } else {
+            LOG(WARNING) << "starrocks.format.metaContext was not be set in share_noting mode";
+        }
+    }
     _max_rows_per_segment =
             getIntOrDefault(_options, "starrocks.format.rows_per_segment", std::numeric_limits<uint32_t>::max());
 }
@@ -64,14 +91,27 @@ Status StarRocksFormatWriter::open() {
         // fs.s3a.retry.interval
         auto fs_options = filter_map_by_key_prefix(_options, "fs.");
         ASSIGN_OR_RETURN(auto fs, FileSystem::Create(_tablet_root_path, FSOptions(fs_options)));
-        // get tablet schema;
-        ASSIGN_OR_RETURN(auto metadata, get_tablet_metadata(fs));
-        _tablet_schema = std::make_shared<TabletSchema>(metadata->schema());
+        if (_share_data) {
+            // get tablet schema;
+            ASSIGN_OR_RETURN(auto metadata, get_tablet_metadata(fs));
+            _tablet_schema = std::make_shared<TabletSchema>(metadata->schema());
+        } else if (!_tablet_context.empty() && !_fast_schema_change) { // non fast schema change will use meta
+            TabletMetaPB tablet_meta_pb;
+            bool ret = json2pb::JsonToProtoMessage(_tablet_context, &tablet_meta_pb);
+            if (ret) {
+                _tablet_schema = std::make_shared<TabletSchema>(tablet_meta_pb.schema());
+            } else {
+                return Status::InternalError("Convert json to TabletMetaPB failed.");
+            }
+            LOG(INFO) << "Gain the tablet schema from context ";
+        }
+
         _tablet = std::make_unique<Tablet>(_lake_tablet_manager, _tablet_id, _provider, _tablet_schema);
         // create tablet writer
         ASSIGN_OR_RETURN(_tablet_writer, _tablet->new_writer(_writer_type, _txn_id, _max_rows_per_segment));
         _tablet_writer->set_fs(fs);
         _tablet_writer->set_location_provider(_provider);
+        _segment_pbs.emplace_back(std::make_shared<SegmentPB>());
     }
     return _tablet_writer->open();
 }
@@ -82,18 +122,26 @@ void StarRocksFormatWriter::close() {
 
 Status StarRocksFormatWriter::write(StarRocksFormatChunk* chunk) {
     if (chunk != nullptr && chunk->chunk()->num_rows() > 0) {
-        return _tablet_writer->write(*chunk->chunk().get());
+        if (_segment_pbs.size() == 0 || !_segment_pbs.back()->path().empty()) {
+            _segment_pbs.emplace_back(std::make_shared<SegmentPB>());
+        }
+        _total_row_size += chunk->chunk()->bytes_usage();
+        return _tablet_writer->write(*chunk->chunk().get(), _segment_pbs.back().get());
     }
     return Status::OK();
 }
 
 Status StarRocksFormatWriter::flush() {
-    return _tablet_writer->flush();
+    return _tablet_writer->flush(_segment_pbs.back().get());
 }
 
 Status StarRocksFormatWriter::finish() {
-    _tablet_writer->finish();
-    return finish_txn_log();
+    _tablet_writer->finish(_segment_pbs.back().get());
+    if (_share_data) {
+        return finish_txn_log();
+    } else {
+        return finish_schema_pb();
+    }
 }
 
 StarRocksFormatChunk* StarRocksFormatWriter::new_chunk(size_t capacity) {
@@ -121,6 +169,41 @@ Status StarRocksFormatWriter::finish_txn_log() {
     op_write->mutable_rowset()->set_data_size(_tablet_writer->data_size());
     op_write->mutable_rowset()->set_overlapped(false);
     return put_txn_log(std::move(txn_log));
+}
+
+Status StarRocksFormatWriter::finish_schema_pb() {
+    std::string tablet_schema_path = _tablet_root_path + "/tablet.schema";
+
+    if (_tablet_schema) {
+        std::shared_ptr<TabletSchemaPB> pb = std::make_shared<TabletSchemaPB>();
+        _tablet_schema->to_schema_pb(pb.get());
+        auto fs_options = filter_map_by_key_prefix(_options, "fs.");
+        ASSIGN_OR_RETURN(auto fs, FileSystem::Create(tablet_schema_path, FSOptions(fs_options)));
+        size_t index = 0;
+        string uuid = generate_uuid_string();
+        for (auto& f : _tablet_writer->files()) {
+            if (is_segment(f.path)) {
+                string dat_file = _tablet_root_path + "/data/" + f.path;
+                string target_pb = dat_file + ".pb";
+                ProtobufFile pb_file(target_pb, fs);
+                _segment_pbs[index]->set_segment_id(index);
+                if (index == 0) {
+                    _segment_pbs[index]->set_num_rows(_tablet_writer->num_rows());
+                    _segment_pbs[index]->set_row_size(_total_row_size);
+                }
+                RETURN_IF_ERROR(pb_file.save(*_segment_pbs[index]));
+                LOG(INFO) << "Write file to the dfs: " << _segment_pbs[index]->DebugString();
+                index++;
+
+            } else {
+                return Status::InternalError(fmt::format("unknown file {}", f.path));
+            }
+        }
+        ProtobufFile file(tablet_schema_path, fs);
+        return file.save(*pb);
+    } else {
+        return Status::InternalError("_tablet_schema was not defined");
+    }
 }
 
 Status StarRocksFormatWriter::put_txn_log(const TxnLogPtr& log) {
@@ -162,4 +245,4 @@ StatusOr<TabletMetadataPtr> StarRocksFormatWriter::get_tablet_metadata(std::shar
     return _lake_tablet_manager->get_tablet_metadata(fs, metadata_location, true);
 }
 
-} // namespace starrocks::lake
+} // namespace starrocks::lake::format
